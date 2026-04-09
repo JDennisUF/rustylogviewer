@@ -35,7 +35,7 @@ struct GuiApp {
     recent_configs: Vec<PathBuf>,
     state_file_path: Option<PathBuf>,
     status_message: String,
-    events: VecDeque<LogEvent>,
+    events: VecDeque<DisplayEvent>,
     total_seen: u64,
     dropped: u64,
     suppressed_by_rules: u64,
@@ -46,11 +46,36 @@ struct GuiApp {
     text_filter: String,
     source_filter: Option<String>,
     config_panel_visible: bool,
+    last_applied_light_mode: Option<bool>,
+    last_applied_font_size: Option<f32>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct GuiStateFile {
     recent_configs: Vec<PathBuf>,
+}
+
+struct DisplayEvent {
+    source: String,
+    line: String,
+    line_lower: String,
+    with_ts: String,
+    without_ts: String,
+}
+
+impl DisplayEvent {
+    fn from_log(event: LogEvent) -> Self {
+        let with_ts = format_event_line(&event, true);
+        let without_ts = format_event_line(&event, false);
+        let line_lower = event.line.to_lowercase();
+        Self {
+            source: event.source,
+            line: event.line,
+            line_lower,
+            with_ts,
+            without_ts,
+        }
+    }
 }
 
 impl GuiApp {
@@ -74,6 +99,8 @@ impl GuiApp {
             text_filter: String::new(),
             source_filter: None,
             config_panel_visible: true,
+            last_applied_light_mode: None,
+            last_applied_font_size: None,
         };
 
         if let Some(path) = select_startup_config(initial_config_path, &app.recent_configs) {
@@ -231,40 +258,47 @@ impl GuiApp {
         self.rules = None;
     }
 
-    fn poll_if_due(&mut self) {
+    fn poll_if_due(&mut self) -> bool {
         if !self.running {
-            return;
+            return false;
         }
         let interval = Duration::from_millis(self.config.poll_interval_ms);
         if self.last_poll_at.elapsed() < interval {
-            return;
+            return false;
         }
         self.last_poll_at = Instant::now();
 
         let Some(watcher) = self.watcher.as_mut() else {
-            return;
+            return false;
         };
         let events = match watcher.poll() {
             Ok(events) => events,
             Err(err) => {
                 self.status_message = format!("Watcher error: {}", err);
                 self.stop_stream();
-                return;
+                return true;
             }
         };
         let Some(rules) = self.rules.as_ref() else {
-            return;
+            return false;
         };
         let (events, suppressed) = rules.partition_events(events);
-        self.suppressed_by_rules += suppressed as u64;
+        let mut changed = false;
+        if suppressed > 0 {
+            self.suppressed_by_rules += suppressed as u64;
+            changed = true;
+        }
         for event in events {
             self.total_seen += 1;
-            self.events.push_back(event);
+            self.events.push_back(DisplayEvent::from_log(event));
+            changed = true;
             while self.events.len() > self.config.max_buffer_lines {
                 self.events.pop_front();
                 self.dropped += 1;
+                changed = true;
             }
         }
+        changed
     }
 
     fn available_sources(&self) -> Vec<String> {
@@ -284,7 +318,7 @@ impl GuiApp {
 
     fn display_matches_filters(
         &self,
-        event: &LogEvent,
+        event: &DisplayEvent,
         lower_text_filter: &Option<String>,
     ) -> bool {
         if let Some(source) = &self.source_filter {
@@ -296,20 +330,28 @@ impl GuiApp {
             return true;
         }
         if let Some(needle) = lower_text_filter {
-            event.line.to_lowercase().contains(needle)
+            event.line_lower.contains(needle)
         } else {
             event.line.contains(&self.text_filter)
         }
     }
 
-    fn apply_visual_theme(&self, ctx: &egui::Context) {
+    fn maybe_apply_visual_theme(&mut self, ctx: &egui::Context) {
+        let base = self.config.gui_font_size.clamp(8.0, 40.0);
+        let should_apply = self.last_applied_light_mode != Some(self.config.gui_light_mode)
+            || self
+                .last_applied_font_size
+                .is_none_or(|prev| (prev - base).abs() > f32::EPSILON);
+        if !should_apply {
+            return;
+        }
+
         if self.config.gui_light_mode {
             ctx.set_visuals(egui::Visuals::light());
         } else {
             ctx.set_visuals(egui::Visuals::dark());
         }
 
-        let base = self.config.gui_font_size.clamp(8.0, 40.0);
         let mut style = (*ctx.style()).clone();
         style.text_styles.insert(
             TextStyle::Small,
@@ -328,6 +370,8 @@ impl GuiApp {
             .text_styles
             .insert(TextStyle::Heading, FontId::proportional(base + 4.0));
         ctx.set_style(style);
+        self.last_applied_light_mode = Some(self.config.gui_light_mode);
+        self.last_applied_font_size = Some(base);
     }
 }
 
@@ -425,13 +469,16 @@ mod tests {
 
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.apply_visual_theme(ctx);
-        self.poll_if_due();
+        self.maybe_apply_visual_theme(ctx);
+        let polled_changed = self.poll_if_due();
         if self.running {
-            ctx.request_repaint_after(Duration::from_millis(100));
+            let interval = Duration::from_millis(self.config.poll_interval_ms);
+            let wait = interval.saturating_sub(self.last_poll_at.elapsed());
+            ctx.request_repaint_after(wait);
         }
-
-        let validation_error = self.config.validate().err().map(|e| e.to_string());
+        if polled_changed {
+            ctx.request_repaint();
+        }
         let mut open_recent_from_menu: Option<PathBuf> = None;
         let mut clear_recent_from_menu = false;
         let recent_snapshot = self.recent_configs.clone();
@@ -478,7 +525,6 @@ impl eframe::App for GuiApp {
                     self.config_panel_visible = !self.config_panel_visible;
                 }
                 ui.separator();
-                let can_start = validation_error.is_none();
                 let start_button = egui::Button::new(
                     RichText::new("Start").strong().color(Color32::WHITE),
                 )
@@ -487,10 +533,7 @@ impl eframe::App for GuiApp {
                 } else {
                     Color32::from_rgb(38, 174, 96)
                 });
-                if ui
-                    .add_enabled(!self.running && can_start, start_button)
-                    .clicked()
-                {
+                if ui.add_enabled(!self.running, start_button).clicked() {
                     self.start_stream();
                 }
 
@@ -534,14 +577,10 @@ impl eframe::App for GuiApp {
                         ui.label("File: (unsaved)");
                     }
 
-                    if let Some(error) = &validation_error {
-                        ui.colored_label(
-                            Color32::from_rgb(220, 110, 110),
-                            format!("Invalid: {}", error),
-                        );
-                    } else {
-                        ui.colored_label(Color32::from_rgb(120, 200, 120), "Config valid");
-                    }
+                    ui.colored_label(
+                        Color32::from_rgb(150, 150, 150),
+                        "Validation runs on Start/Save",
+                    );
 
                     ui.separator();
                     ui.label(RichText::new("Recent Configs").strong());
@@ -741,7 +780,11 @@ impl eframe::App for GuiApp {
                         if !self.display_matches_filters(event, &lower_text_filter) {
                             continue;
                         }
-                        let line = format_event_line(event, self.config.show_timestamps);
+                        let line = if self.config.show_timestamps {
+                            &event.with_ts
+                        } else {
+                            &event.without_ts
+                        };
                         ui.label(RichText::new(line).monospace());
                     }
                 });

@@ -42,6 +42,8 @@ struct GuiApp {
     running: bool,
     watcher: Option<PollingWatcher>,
     rules: Option<LineRules>,
+    active_blacklist_regex: Vec<String>,
+    active_whitelist_regex: Vec<String>,
     last_poll_at: Instant,
     text_filter: String,
     source_filter: Option<String>,
@@ -95,6 +97,8 @@ impl GuiApp {
             running: false,
             watcher: None,
             rules: None,
+            active_blacklist_regex: Vec::new(),
+            active_whitelist_regex: Vec::new(),
             last_poll_at: Instant::now(),
             text_filter: String::new(),
             source_filter: None,
@@ -248,6 +252,8 @@ impl GuiApp {
         self.last_poll_at = Instant::now();
         self.watcher = Some(watcher);
         self.rules = Some(rules);
+        self.active_blacklist_regex = self.config.blacklist_regex.clone();
+        self.active_whitelist_regex = self.config.whitelist_regex.clone();
         self.running = true;
         self.status_message = "Stream started".to_string();
     }
@@ -256,6 +262,8 @@ impl GuiApp {
         self.running = false;
         self.watcher = None;
         self.rules = None;
+        self.active_blacklist_regex.clear();
+        self.active_whitelist_regex.clear();
     }
 
     fn poll_if_due(&mut self) -> bool {
@@ -373,6 +381,29 @@ impl GuiApp {
         self.last_applied_light_mode = Some(self.config.gui_light_mode);
         self.last_applied_font_size = Some(base);
     }
+
+    fn maybe_reload_rules_while_running(&mut self) {
+        if !self.running {
+            return;
+        }
+        if self.config.blacklist_regex == self.active_blacklist_regex
+            && self.config.whitelist_regex == self.active_whitelist_regex
+        {
+            return;
+        }
+
+        match LineRules::new(&self.config.blacklist_regex, &self.config.whitelist_regex) {
+            Ok(rules) => {
+                self.rules = Some(rules);
+                self.active_blacklist_regex = self.config.blacklist_regex.clone();
+                self.active_whitelist_regex = self.config.whitelist_regex.clone();
+                self.status_message = "Applied updated regex rules".to_string();
+            }
+            Err(err) => {
+                self.status_message = format!("Regex update failed: {}", err);
+            }
+        }
+    }
 }
 
 fn gui_state_file_path() -> Option<PathBuf> {
@@ -470,6 +501,7 @@ mod tests {
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.maybe_apply_visual_theme(ctx);
+        self.maybe_reload_rules_while_running();
         let polled_changed = self.poll_if_due();
         if self.running {
             let interval = Duration::from_millis(self.config.poll_interval_ms);
@@ -732,8 +764,8 @@ impl eframe::App for GuiApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("mode={}", mode));
                 ui.label(format!("seen={}", self.total_seen));
-                ui.label(format!("dropped={}", self.dropped));
-                ui.label(format!("suppressed={}", self.suppressed_by_rules));
+                ui.label(format!("dropped(buffer)={}", self.dropped));
+                ui.label(format!("suppressed(regex)={}", self.suppressed_by_rules));
                 ui.label(format!("retained={}", self.events.len()));
                 ui.separator();
                 ui.label(&self.status_message);

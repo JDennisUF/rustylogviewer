@@ -110,6 +110,7 @@ Current GUI supports:
   - tracked files
   - blacklist/whitelist regex lists
 - `Start`/`Stop` log stream controls
+- live regex rule updates while running (blacklist/whitelist changes are applied immediately)
 - merged live feed with source + text filters
 
 Packaging and cross-platform QA hardening are still in progress.

@@ -32,6 +32,10 @@ pub struct CliArgs {
     #[arg(long, action = ArgAction::SetTrue, conflicts_with = "show_timestamps")]
     pub no_timestamps: bool,
 
+    /// Validate configuration and exit.
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub print_config_only: bool,
+
     /// Files to track. If present, overrides `tracked_files` from config.
     #[arg(value_name = "FILE")]
     pub files: Vec<PathBuf>,

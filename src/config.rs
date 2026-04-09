@@ -31,7 +31,7 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn from_cli(cli: CliArgs) -> Result<Self> {
+    pub fn from_cli(cli: &CliArgs) -> Result<Self> {
         let file_cfg = match cli.config.as_ref() {
             Some(path) => Some(load_config_file(path)?),
             None => None,
@@ -108,7 +108,7 @@ fn load_config_file(path: &Path) -> Result<FileConfig> {
     Ok(cfg)
 }
 
-fn merge_config(file_cfg: Option<FileConfig>, cli: CliArgs) -> Result<AppConfig> {
+fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig> {
     let mut config = AppConfig::default();
 
     if let Some(file_cfg) = file_cfg {
@@ -145,7 +145,7 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: CliArgs) -> Result<AppConfig>
         config.show_timestamps = false;
     }
     if !cli.files.is_empty() {
-        config.tracked_files = cli.files;
+        config.tracked_files = cli.files.clone();
     }
 
     Ok(config)
@@ -180,9 +180,10 @@ tracked_files = ["./a.log", "./b.log"]
             max_line_len: None,
             show_timestamps: false,
             no_timestamps: false,
+            print_config_only: false,
             files: Vec::new(),
         };
-        let config = AppConfig::from_cli(cli).expect("valid config");
+        let config = AppConfig::from_cli(&cli).expect("valid config");
 
         assert_eq!(config.poll_interval_ms, 2000);
         assert_eq!(config.max_buffer_lines, 7777);
@@ -209,9 +210,10 @@ tracked_files = ["./a.log", "./b.log"]
             max_line_len: Some(80),
             show_timestamps: true,
             no_timestamps: false,
+            print_config_only: false,
             files: vec![PathBuf::from("/tmp/override.log")],
         };
-        let config = AppConfig::from_cli(cli).expect("valid config");
+        let config = AppConfig::from_cli(&cli).expect("valid config");
 
         assert_eq!(config.poll_interval_ms, 1500);
         assert_eq!(config.max_buffer_lines, 100);
@@ -232,10 +234,11 @@ tracked_files = ["./a.log", "./b.log"]
             max_line_len: None,
             show_timestamps: false,
             no_timestamps: false,
+            print_config_only: false,
             files: Vec::new(),
         };
 
-        let err = AppConfig::from_cli(cli).expect_err("expected missing files validation error");
+        let err = AppConfig::from_cli(&cli).expect_err("expected missing files validation error");
         assert!(err.to_string().contains("no tracked files configured"));
     }
 }

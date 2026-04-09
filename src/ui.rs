@@ -362,6 +362,7 @@ mod tests {
             max_buffer_lines: 100,
             max_line_len: 256,
             show_timestamps: true,
+            gui_light_mode: false,
             case_insensitive_text_filter: true,
             blacklist_regex: Vec::new(),
             whitelist_regex: Vec::new(),

@@ -17,6 +17,7 @@ pub struct AppConfig {
     pub max_buffer_lines: usize,
     pub max_line_len: usize,
     pub show_timestamps: bool,
+    pub gui_light_mode: bool,
     pub case_insensitive_text_filter: bool,
     pub blacklist_regex: Vec<String>,
     pub whitelist_regex: Vec<String>,
@@ -30,6 +31,7 @@ impl Default for AppConfig {
             max_buffer_lines: DEFAULT_MAX_BUFFER_LINES,
             max_line_len: DEFAULT_MAX_LINE_LEN,
             show_timestamps: true,
+            gui_light_mode: false,
             case_insensitive_text_filter: true,
             blacklist_regex: Vec::new(),
             whitelist_regex: Vec::new(),
@@ -73,6 +75,7 @@ impl AppConfig {
         let _ = writeln!(summary, "  max_buffer_lines: {}", self.max_buffer_lines);
         let _ = writeln!(summary, "  max_line_len: {}", self.max_line_len);
         let _ = writeln!(summary, "  show_timestamps: {}", self.show_timestamps);
+        let _ = writeln!(summary, "  gui_light_mode: {}", self.gui_light_mode);
         let _ = writeln!(
             summary,
             "  case_insensitive_text_filter: {}",
@@ -144,6 +147,7 @@ struct FileConfig {
     max_buffer_lines: Option<usize>,
     max_line_len: Option<usize>,
     show_timestamps: Option<bool>,
+    gui_light_mode: Option<bool>,
     case_insensitive_text_filter: Option<bool>,
     blacklist_regex: Option<Vec<String>>,
     whitelist_regex: Option<Vec<String>>,
@@ -192,6 +196,9 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig
         }
         if let Some(v) = file_cfg.show_timestamps {
             config.show_timestamps = v;
+        }
+        if let Some(v) = file_cfg.gui_light_mode {
+            config.gui_light_mode = v;
         }
         if let Some(v) = file_cfg.case_insensitive_text_filter {
             config.case_insensitive_text_filter = v;
@@ -260,6 +267,7 @@ poll_interval_ms = 2000
 max_buffer_lines = 7777
 max_line_len = 256
 show_timestamps = false
+gui_light_mode = true
 case_insensitive_text_filter = false
 blacklist_regex = ["DEBUG.*"]
 whitelist_regex = ["DEBUG.*critical"]
@@ -288,6 +296,7 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_buffer_lines, 7777);
         assert_eq!(config.max_line_len, 256);
         assert!(!config.show_timestamps);
+        assert!(config.gui_light_mode);
         assert!(!config.case_insensitive_text_filter);
         assert_eq!(config.blacklist_regex, vec!["DEBUG.*".to_string()]);
         assert_eq!(config.whitelist_regex, vec!["DEBUG.*critical".to_string()]);
@@ -302,6 +311,7 @@ poll_interval_ms = 2000
 max_buffer_lines = 7777
 max_line_len = 256
 show_timestamps = false
+gui_light_mode = true
 case_insensitive_text_filter = false
 blacklist_regex = ["x"]
 whitelist_regex = ["y"]
@@ -330,6 +340,7 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_buffer_lines, 100);
         assert_eq!(config.max_line_len, 80);
         assert!(config.show_timestamps);
+        assert!(config.gui_light_mode);
         assert!(config.case_insensitive_text_filter);
         assert_eq!(config.blacklist_regex, vec!["ERROR".to_string()]);
         assert_eq!(config.whitelist_regex, vec!["ERROR keep".to_string()]);

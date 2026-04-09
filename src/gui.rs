@@ -249,10 +249,19 @@ impl GuiApp {
             event.line.contains(&self.text_filter)
         }
     }
+
+    fn apply_visual_theme(&self, ctx: &egui::Context) {
+        if self.config.gui_light_mode {
+            ctx.set_visuals(egui::Visuals::light());
+        } else {
+            ctx.set_visuals(egui::Visuals::dark());
+        }
+    }
 }
 
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_visual_theme(ctx);
         self.poll_if_due();
         if self.running && !self.paused {
             ctx.request_repaint_after(Duration::from_millis(100));
@@ -274,6 +283,8 @@ impl eframe::App for GuiApp {
                 if ui.button("Save As").clicked() {
                     self.save_config_as();
                 }
+                ui.separator();
+                ui.checkbox(&mut self.config.gui_light_mode, "Light Mode");
                 ui.separator();
                 let can_start = validation_error.is_none();
                 if ui
@@ -348,6 +359,7 @@ impl eframe::App for GuiApp {
                     );
                 });
                 ui.checkbox(&mut self.config.show_timestamps, "Show timestamps");
+                ui.checkbox(&mut self.config.gui_light_mode, "Light mode");
                 ui.checkbox(
                     &mut self.config.case_insensitive_text_filter,
                     "Case-insensitive text filter",

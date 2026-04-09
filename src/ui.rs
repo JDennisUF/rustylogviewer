@@ -88,7 +88,12 @@ fn render(frame: &mut Frame<'_>, state: &TuiState, config: &AppConfig) {
 
     let lines = state.visible_lines(config.show_timestamps, areas[1].height as usize);
     let content = if lines.is_empty() {
-        Paragraph::new("Waiting for new log lines...")
+        let empty_text = if state.events.is_empty() {
+            "Waiting for new log lines..."
+        } else {
+            "No lines match active filters."
+        };
+        Paragraph::new(empty_text)
             .style(Style::default().fg(Color::DarkGray))
             .block(Block::default())
     } else {
@@ -105,7 +110,16 @@ struct TuiState {
     paused: bool,
     scroll_offset: usize,
     sources: Vec<String>,
-    active_filter_idx: Option<usize>,
+    active_source_filter_idx: Option<usize>,
+    text_filter: String,
+    search_input: String,
+    input_mode: InputMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Normal,
+    Search,
 }
 
 impl TuiState {
@@ -127,7 +141,10 @@ impl TuiState {
             paused: false,
             scroll_offset: 0,
             sources,
-            active_filter_idx: None,
+            active_source_filter_idx: None,
+            text_filter: String::new(),
+            search_input: String::new(),
+            input_mode: InputMode::Normal,
         }
     }
 
@@ -148,6 +165,10 @@ impl TuiState {
     }
 
     fn handle_key(&mut self, key: KeyCode) -> bool {
+        if self.input_mode == InputMode::Search {
+            return self.handle_search_key(key);
+        }
+
         match key {
             KeyCode::Char('q') => true,
             KeyCode::Char('p') => {
@@ -175,24 +196,69 @@ impl TuiState {
                 self.cycle_filter();
                 false
             }
+            KeyCode::Char('/') => {
+                self.input_mode = InputMode::Search;
+                self.search_input = self.text_filter.clone();
+                false
+            }
+            KeyCode::Char('c') => {
+                self.text_filter.clear();
+                self.scroll_offset = 0;
+                false
+            }
             _ => false,
         }
     }
 
+    fn handle_search_key(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Enter => {
+                self.text_filter = self.search_input.trim().to_string();
+                self.search_input.clear();
+                self.input_mode = InputMode::Normal;
+                self.scroll_offset = 0;
+            }
+            KeyCode::Backspace => {
+                self.search_input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.search_input.push(c);
+            }
+            _ => {}
+        }
+        false
+    }
+
     fn header_line(&self, config: &AppConfig) -> String {
-        let filter_label = match self.active_filter_idx {
+        if self.input_mode == InputMode::Search {
+            return format!(
+                "search:/{}  Enter apply  Esc cancel  Backspace delete",
+                self.search_input
+            );
+        }
+
+        let source_filter_label = match self.active_source_filter_idx {
             Some(idx) => format!("filter={}", self.sources[idx]),
             None => "filter=all".to_string(),
         };
+        let text_filter_label = if self.text_filter.is_empty() {
+            "text=off".to_string()
+        } else {
+            format!("text={}", self.text_filter)
+        };
         format!(
-            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  {}  {}  keys:q quit p pause j/k scroll g/G f",
+            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  {}  {}  {}  keys:q p j/k g/G f / c",
             self.sources.len(),
             config.poll_interval_ms,
             self.events.len(),
             self.total_events_seen,
             self.dropped_events,
             if self.paused { "paused" } else { "live" },
-            filter_label
+            source_filter_label,
+            text_filter_label
         )
     }
 
@@ -227,21 +293,99 @@ impl TuiState {
     }
 
     fn filter_matches(&self, event: &LogEvent) -> bool {
-        match self.active_filter_idx {
+        let source_match = match self.active_source_filter_idx {
             Some(idx) => self
                 .sources
                 .get(idx)
                 .is_some_and(|source| source == &event.source),
             None => true,
-        }
+        };
+        let text_match = self.text_filter.is_empty() || event.line.contains(&self.text_filter);
+        source_match && text_match
     }
 
     fn cycle_filter(&mut self) {
-        self.active_filter_idx = match self.active_filter_idx {
+        self.active_source_filter_idx = match self.active_source_filter_idx {
             None if !self.sources.is_empty() => Some(0),
             Some(idx) if idx + 1 < self.sources.len() => Some(idx + 1),
             _ => None,
         };
         self.scroll_offset = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            poll_interval_ms: 1000,
+            tracked_files: vec![PathBuf::from("/tmp/a.log"), PathBuf::from("/tmp/b.log")],
+            max_buffer_lines: 100,
+            max_line_len: 256,
+            show_timestamps: true,
+        }
+    }
+
+    #[test]
+    fn applies_text_filter_after_search_mode_submit() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+        state.push_events(
+            vec![
+                LogEvent {
+                    ts: SystemTime::UNIX_EPOCH,
+                    source: "a.log".to_string(),
+                    line: "INFO app started".to_string(),
+                },
+                LogEvent {
+                    ts: SystemTime::UNIX_EPOCH,
+                    source: "b.log".to_string(),
+                    line: "ERROR failed to bind".to_string(),
+                },
+            ],
+            config.max_buffer_lines,
+        );
+
+        state.handle_key(KeyCode::Char('/'));
+        state.handle_key(KeyCode::Char('E'));
+        state.handle_key(KeyCode::Char('R'));
+        state.handle_key(KeyCode::Char('R'));
+        state.handle_key(KeyCode::Char('O'));
+        state.handle_key(KeyCode::Char('R'));
+        state.handle_key(KeyCode::Enter);
+
+        assert_eq!(state.text_filter, "ERROR");
+        assert_eq!(state.filtered_len(), 1);
+    }
+
+    #[test]
+    fn clear_text_filter_restores_all_lines() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+        state.push_events(
+            vec![
+                LogEvent {
+                    ts: SystemTime::UNIX_EPOCH,
+                    source: "a.log".to_string(),
+                    line: "alpha".to_string(),
+                },
+                LogEvent {
+                    ts: SystemTime::UNIX_EPOCH,
+                    source: "b.log".to_string(),
+                    line: "beta".to_string(),
+                },
+            ],
+            config.max_buffer_lines,
+        );
+        state.text_filter = "alpha".to_string();
+        assert_eq!(state.filtered_len(), 1);
+
+        state.handle_key(KeyCode::Char('c'));
+        assert!(state.text_filter.is_empty());
+        assert_eq!(state.filtered_len(), 2);
     }
 }

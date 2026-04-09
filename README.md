@@ -52,8 +52,9 @@ CLI values override config file values.
 - `g`: jump to oldest retained lines
 - `G`: jump to newest lines
 - `f`: cycle source-file filter
+- `/`: enter text-filter input mode (`Enter` apply, `Esc` cancel)
+- `c`: clear active text filter
 
 ## Config Example
 
 See [`rustylogviewer.toml.example`](./rustylogviewer.toml.example).
-

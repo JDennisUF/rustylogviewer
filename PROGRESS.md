@@ -15,3 +15,7 @@
 - [x] Phase 2 commit created
 - [x] Phase 3 commit created
 - [x] Phase 4 commit created
+
+## Post-v0 Enhancements
+
+- [x] Add interactive text filter in TUI (`/` to set, `c` to clear)

@@ -107,7 +107,7 @@ Current GUI supports:
   - general settings
   - tracked files
   - blacklist/whitelist regex lists
-- `Start`/`Stop`/`Pause` log stream controls
+- `Start`/`Stop` log stream controls
 - merged live feed with source + text filters
 
 Packaging and cross-platform QA hardening are still in progress.

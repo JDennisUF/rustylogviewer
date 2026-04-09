@@ -40,7 +40,6 @@ struct GuiApp {
     dropped: u64,
     suppressed_by_rules: u64,
     running: bool,
-    paused: bool,
     watcher: Option<PollingWatcher>,
     rules: Option<LineRules>,
     last_poll_at: Instant,
@@ -69,7 +68,6 @@ impl GuiApp {
             dropped: 0,
             suppressed_by_rules: 0,
             running: false,
-            paused: false,
             watcher: None,
             rules: None,
             last_poll_at: Instant::now(),
@@ -226,19 +224,17 @@ impl GuiApp {
         self.watcher = Some(watcher);
         self.rules = Some(rules);
         self.running = true;
-        self.paused = false;
         self.status_message = "Stream started".to_string();
     }
 
     fn stop_stream(&mut self) {
         self.running = false;
-        self.paused = false;
         self.watcher = None;
         self.rules = None;
     }
 
     fn poll_if_due(&mut self) {
-        if !self.running || self.paused {
+        if !self.running {
             return;
         }
         let interval = Duration::from_millis(self.config.poll_interval_ms);
@@ -413,7 +409,7 @@ impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_visual_theme(ctx);
         self.poll_if_due();
-        if self.running && !self.paused {
+        if self.running {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
@@ -479,21 +475,21 @@ impl eframe::App for GuiApp {
                 {
                     self.start_stream();
                 }
-                if ui
-                    .add_enabled(self.running, egui::Button::new("Stop"))
-                    .clicked()
-                {
+
+                let stop_button = if self.running {
+                    egui::Button::new(RichText::new("Stop").strong().color(Color32::WHITE)).fill(
+                        if self.config.gui_light_mode {
+                            Color32::from_rgb(200, 55, 55)
+                        } else {
+                            Color32::from_rgb(190, 45, 45)
+                        },
+                    )
+                } else {
+                    egui::Button::new("Stop")
+                };
+                if ui.add_enabled(self.running, stop_button).clicked() {
                     self.stop_stream();
                     self.status_message = "Stream stopped".to_string();
-                }
-                if ui
-                    .add_enabled(
-                        self.running,
-                        egui::Button::new(if self.paused { "Resume" } else { "Pause" }),
-                    )
-                    .clicked()
-                {
-                    self.paused = !self.paused;
                 }
             });
         });
@@ -675,11 +671,7 @@ impl eframe::App for GuiApp {
         }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            let mode = if self.running {
-                if self.paused { "paused" } else { "live" }
-            } else {
-                "stopped"
-            };
+            let mode = if self.running { "live" } else { "stopped" };
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("mode={}", mode));
                 ui.label(format!("seen={}", self.total_seen));

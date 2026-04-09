@@ -100,6 +100,7 @@ Details are tracked in [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md).
 Current GUI supports:
 
 - `Open Config`, `New Config`, `Save`, and `Save As`
+- MRU recent-config list (persisted across app runs)
 - selectable `Light Mode` (persisted as `gui_light_mode` in config)
 - configurable GUI font size (persisted as `gui_font_size`)
 - form-based editing for:

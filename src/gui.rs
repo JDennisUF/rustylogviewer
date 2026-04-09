@@ -4,12 +4,14 @@ use crate::line_rules::LineRules;
 use crate::watcher::{LogEvent, PollingWatcher};
 use anyhow::{Result, anyhow};
 use eframe::egui::{self, Color32, FontId, RichText, TextEdit, TextStyle};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const DEFAULT_WINDOW_WIDTH: f32 = 1400.0;
 const DEFAULT_WINDOW_HEIGHT: f32 = 900.0;
+const MAX_RECENT_CONFIGS: usize = 10;
 
 pub fn run_gui(initial_config_path: Option<PathBuf>) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -30,6 +32,8 @@ pub fn run_gui(initial_config_path: Option<PathBuf>) -> Result<()> {
 struct GuiApp {
     config: AppConfig,
     config_path: Option<PathBuf>,
+    recent_configs: Vec<PathBuf>,
+    state_file_path: Option<PathBuf>,
     status_message: String,
     events: VecDeque<LogEvent>,
     total_seen: u64,
@@ -45,11 +49,20 @@ struct GuiApp {
     config_panel_visible: bool,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct GuiStateFile {
+    recent_configs: Vec<PathBuf>,
+}
+
 impl GuiApp {
     fn new(initial_config_path: Option<PathBuf>) -> Self {
+        let state_file_path = gui_state_file_path();
+        let recent_configs = load_recent_configs(state_file_path.as_deref()).unwrap_or_default();
         let mut app = Self {
             config: AppConfig::default(),
             config_path: None,
+            recent_configs,
+            state_file_path,
             status_message: "Ready".to_string(),
             events: VecDeque::new(),
             total_seen: 0,
@@ -67,6 +80,8 @@ impl GuiApp {
 
         if let Some(path) = initial_config_path {
             app.open_config(path);
+        } else if !app.recent_configs.is_empty() {
+            app.status_message = "Ready. Open a config or choose one from Recent.".to_string();
         }
         app
     }
@@ -87,6 +102,7 @@ impl GuiApp {
                 self.stop_stream();
                 self.config = config;
                 self.config_path = Some(path.clone());
+                self.push_recent_config(path.clone());
                 self.status_message = format!("Loaded {}", path.display());
             }
             Err(err) => {
@@ -130,11 +146,51 @@ impl GuiApp {
         }
         match self.config.write_to_file(path) {
             Ok(()) => {
+                self.push_recent_config(path.to_path_buf());
                 self.status_message = format!("Saved {}", path.display());
             }
             Err(err) => {
                 self.status_message = format!("Failed to save {}: {}", path.display(), err);
             }
+        }
+    }
+
+    fn push_recent_config(&mut self, path: PathBuf) {
+        self.recent_configs.retain(|existing| existing != &path);
+        self.recent_configs.insert(0, path);
+        if self.recent_configs.len() > MAX_RECENT_CONFIGS {
+            self.recent_configs.truncate(MAX_RECENT_CONFIGS);
+        }
+        self.persist_recent_configs();
+    }
+
+    fn remove_recent_config_at(&mut self, index: usize) {
+        if index < self.recent_configs.len() {
+            self.recent_configs.remove(index);
+            self.persist_recent_configs();
+        }
+    }
+
+    fn clear_recent_configs(&mut self) {
+        self.recent_configs.clear();
+        self.persist_recent_configs();
+    }
+
+    fn persist_recent_configs(&self) {
+        let Some(path) = self.state_file_path.as_ref() else {
+            return;
+        };
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        let payload = GuiStateFile {
+            recent_configs: self.recent_configs.clone(),
+        };
+        if let Ok(toml) = toml::to_string_pretty(&payload) {
+            let _ = std::fs::write(path, toml);
         }
     }
 
@@ -281,6 +337,78 @@ impl GuiApp {
     }
 }
 
+fn gui_state_file_path() -> Option<PathBuf> {
+    let base = dirs::config_dir()?;
+    Some(base.join("rustylogviewer").join("gui_state.toml"))
+}
+
+fn load_recent_configs(path: Option<&Path>) -> Result<Vec<PathBuf>> {
+    let Some(path) = path else {
+        return Ok(Vec::new());
+    };
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read_to_string(path)?;
+    let state: GuiStateFile = toml::from_str(&raw)?;
+    let mut deduped = Vec::new();
+    for entry in state.recent_configs {
+        if entry.as_os_str().is_empty() {
+            continue;
+        }
+        if deduped.iter().any(|existing| existing == &entry) {
+            continue;
+        }
+        deduped.push(entry);
+        if deduped.len() >= MAX_RECENT_CONFIGS {
+            break;
+        }
+    }
+    Ok(deduped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_recent_configs_missing_file_is_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("missing.toml");
+        let recents = load_recent_configs(Some(&path)).expect("load recents");
+        assert!(recents.is_empty());
+    }
+
+    #[test]
+    fn load_recent_configs_dedupes_and_limits_entries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.toml");
+        let mut paths = Vec::new();
+        for i in 0..(MAX_RECENT_CONFIGS + 5) {
+            paths.push(PathBuf::from(format!("/tmp/config-{}.toml", i)));
+        }
+        paths.insert(3, PathBuf::from("/tmp/config-0.toml"));
+        paths.insert(5, PathBuf::new());
+        let content = toml::to_string(&GuiStateFile {
+            recent_configs: paths,
+        })
+        .expect("serialize");
+        std::fs::write(&path, content).expect("write state");
+
+        let recents = load_recent_configs(Some(&path)).expect("load recents");
+        assert_eq!(recents.first(), Some(&PathBuf::from("/tmp/config-0.toml")));
+        assert!(recents.len() <= MAX_RECENT_CONFIGS);
+        assert_eq!(
+            recents
+                .iter()
+                .filter(|p| **p == PathBuf::from("/tmp/config-0.toml"))
+                .count(),
+            1
+        );
+        assert!(!recents.iter().any(|p| p.as_os_str().is_empty()));
+    }
+}
+
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_visual_theme(ctx);
@@ -290,12 +418,33 @@ impl eframe::App for GuiApp {
         }
 
         let validation_error = self.config.validate().err().map(|e| e.to_string());
+        let mut open_recent_from_menu: Option<PathBuf> = None;
+        let mut clear_recent_from_menu = false;
+        let recent_snapshot = self.recent_configs.clone();
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Open Config").clicked() {
                     self.open_config_picker();
                 }
+                ui.menu_button("Recent Configs", |ui| {
+                    if recent_snapshot.is_empty() {
+                        ui.label("No recent configs");
+                        return;
+                    }
+                    for path in &recent_snapshot {
+                        let label = path.display().to_string();
+                        if ui.button(label).clicked() {
+                            open_recent_from_menu = Some(path.clone());
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Clear Recent").clicked() {
+                        clear_recent_from_menu = true;
+                        ui.close();
+                    }
+                });
                 if ui.button("New Config").clicked() {
                     self.new_config();
                 }
@@ -341,7 +490,17 @@ impl eframe::App for GuiApp {
             });
         });
 
+        if let Some(path) = open_recent_from_menu {
+            self.open_config(path);
+        }
+        if clear_recent_from_menu {
+            self.clear_recent_configs();
+            self.status_message = "Cleared recent config list".to_string();
+        }
+
         if self.config_panel_visible {
+            let mut open_recent_from_panel: Option<PathBuf> = None;
+            let mut remove_recent_idx: Option<usize> = None;
             egui::SidePanel::left("config_sidebar")
                 .resizable(true)
                 .min_width(340.0)
@@ -360,6 +519,34 @@ impl eframe::App for GuiApp {
                         );
                     } else {
                         ui.colored_label(Color32::from_rgb(120, 200, 120), "Config valid");
+                    }
+
+                    ui.separator();
+                    ui.label(RichText::new("Recent Configs").strong());
+                    if recent_snapshot.is_empty() {
+                        ui.label("No recent configs");
+                    } else {
+                        for (idx, path) in recent_snapshot.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(path.file_name().map_or_else(
+                                        || path.display().to_string(),
+                                        |name| name.to_string_lossy().into_owned(),
+                                    ))
+                                    .clicked()
+                                {
+                                    open_recent_from_panel = Some(path.clone());
+                                }
+                                if ui.small_button("X").clicked() {
+                                    remove_recent_idx = Some(idx);
+                                }
+                            });
+                            ui.label(
+                                RichText::new(path.display().to_string())
+                                    .small()
+                                    .color(Color32::GRAY),
+                            );
+                        }
                     }
 
                     ui.separator();
@@ -470,6 +657,13 @@ impl eframe::App for GuiApp {
                         self.config.whitelist_regex.push(String::new());
                     }
                 });
+
+            if let Some(path) = open_recent_from_panel {
+                self.open_config(path);
+            }
+            if let Some(idx) = remove_recent_idx {
+                self.remove_recent_config_at(idx);
+            }
         }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {

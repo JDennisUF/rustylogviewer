@@ -28,6 +28,7 @@
 - [x] Add graphical UI frontend scaffold for Windows/Linux (`--gui`)
 - [x] Add user-selectable GUI light mode
 - [x] Add user-selectable GUI font size control
+- [x] Add MRU recent-config list in GUI
 
 ## GUI Notes
 

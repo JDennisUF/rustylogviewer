@@ -18,6 +18,18 @@ cargo build
 
 ## Run
 
+GUI mode (desktop, Windows/Linux target):
+
+```bash
+cargo run -- --gui
+```
+
+GUI with preloaded config:
+
+```bash
+cargo run -- --gui --config ./rustylogviewer.toml
+```
+
 TUI mode (default):
 
 ```bash
@@ -82,3 +94,17 @@ A cross-platform graphical UI is planned using `eframe/egui` with:
 - merged live feed similar to current TUI behavior
 
 Details are tracked in [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md).
+
+## GUI Status
+
+Current GUI supports:
+
+- `Open Config`, `New Config`, `Save`, and `Save As`
+- form-based editing for:
+  - general settings
+  - tracked files
+  - blacklist/whitelist regex lists
+- `Start`/`Stop`/`Pause` log stream controls
+- merged live feed with source + text filters
+
+Packaging and cross-platform QA hardening are still in progress.

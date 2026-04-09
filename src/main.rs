@@ -3,6 +3,7 @@ use clap::Parser;
 use rustylogviewer::cli::CliArgs;
 use rustylogviewer::config::AppConfig;
 use rustylogviewer::formatting::format_event_line;
+use rustylogviewer::gui;
 use rustylogviewer::line_rules::LineRules;
 use rustylogviewer::ui;
 use rustylogviewer::watcher::PollingWatcher;
@@ -10,6 +11,10 @@ use std::time::Duration;
 
 fn main() -> Result<()> {
     let cli = CliArgs::parse();
+    if cli.gui {
+        return gui::run_gui(cli.config.clone());
+    }
+
     let config = AppConfig::from_cli(&cli)?;
 
     if cli.print_config_only {

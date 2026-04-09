@@ -1,7 +1,7 @@
 use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 #[command(
     name = "rustylogviewer",
     version,
@@ -33,12 +33,16 @@ pub struct CliArgs {
     pub no_timestamps: bool,
 
     /// Validate configuration and exit.
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "gui")]
     pub print_config_only: bool,
 
     /// Run without TUI and print events to stdout.
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "gui")]
     pub headless: bool,
+
+    /// Run with graphical desktop UI.
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "headless")]
+    pub gui: bool,
 
     /// Match text filters case-insensitively (default behavior).
     #[arg(long, action = ArgAction::SetTrue, conflicts_with = "case_sensitive_filter")]

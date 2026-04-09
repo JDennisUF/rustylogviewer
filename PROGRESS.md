@@ -7,7 +7,7 @@
 - [x] Milestone 2: Unified TUI feed with compact UI and controls
 - [x] Milestone 3: Performance/noise hardening and counters
 - [x] Milestone 4: Quality polish, docs, and release prep
-- [ ] Milestone 5: GUI bootstrap (eframe shell + layout)
+- [x] Milestone 5: GUI bootstrap (eframe shell + layout)
 - [ ] Milestone 6: GUI live merged feed + controls
 - [ ] Milestone 7: GUI config file open/save/save-as
 - [ ] Milestone 8: GUI in-app config editor (files + regex lists + validation)
@@ -25,4 +25,9 @@
 
 - [x] Add interactive text filter in TUI (`/` to set, `c` to clear)
 - [x] Add case-insensitive text filtering and regex blacklist/whitelist rules
-- [ ] Add graphical UI frontend for Windows/Linux
+- [x] Add graphical UI frontend scaffold for Windows/Linux (`--gui`)
+
+## GUI Notes
+
+- Baseline GUI is implemented with open/save config flow and simple config editor.
+- Remaining work is primarily hardening, UX polish, and packaging/QA (Milestone 9).

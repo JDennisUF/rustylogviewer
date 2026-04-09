@@ -230,6 +230,11 @@ Manual smoke checks:
 - Regex blacklist/whitelist rules implemented with whitelist precedence.
 - Headless mode implemented.
 - Unit and integration tests in place.
+- GUI scaffold implemented (`--gui`) with:
+  - desktop shell layout
+  - open/new/save/save-as config actions
+  - simple config editor panels
+  - live merged feed start/stop/pause baseline
 
 ## 15. GUI Plan (Windows + Linux)
 

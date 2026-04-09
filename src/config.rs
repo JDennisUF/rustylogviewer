@@ -1,7 +1,7 @@
 use crate::cli::CliArgs;
 use anyhow::{Context, Result, bail};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -10,7 +10,7 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_MAX_BUFFER_LINES: usize = 10_000;
 const DEFAULT_MAX_LINE_LEN: usize = 512;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AppConfig {
     pub poll_interval_ms: u64,
     pub tracked_files: Vec<PathBuf>,
@@ -48,6 +48,24 @@ impl AppConfig {
         Ok(config)
     }
 
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let cli = CliArgs::default();
+        let config = merge_config(Some(load_config_file(path)?), &cli)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn to_toml_string(&self) -> Result<String> {
+        Ok(toml::to_string_pretty(self)?)
+    }
+
+    pub fn write_to_file(&self, path: &Path) -> Result<()> {
+        let content = self.to_toml_string()?;
+        std::fs::write(path, content)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        Ok(())
+    }
+
     pub fn summary_string(&self) -> String {
         let mut summary = String::new();
         let _ = writeln!(summary, "Effective configuration:");
@@ -83,7 +101,7 @@ impl AppConfig {
         summary
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.poll_interval_ms == 0 {
             return Err(ConfigValidationError::InvalidPollInterval(self.poll_interval_ms).into());
         }
@@ -257,6 +275,7 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            gui: false,
             case_insensitive_filter: false,
             case_sensitive_filter: false,
             blacklist_regex: Vec::new(),
@@ -298,6 +317,7 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            gui: false,
             case_insensitive_filter: true,
             case_sensitive_filter: false,
             blacklist_regex: vec!["ERROR".to_string()],
@@ -330,6 +350,7 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            gui: false,
             case_insensitive_filter: false,
             case_sensitive_filter: false,
             blacklist_regex: Vec::new(),
@@ -352,6 +373,7 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            gui: false,
             case_insensitive_filter: false,
             case_sensitive_filter: false,
             blacklist_regex: vec!["(".to_string()],

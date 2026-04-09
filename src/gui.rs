@@ -3,7 +3,7 @@ use crate::formatting::format_event_line;
 use crate::line_rules::LineRules;
 use crate::watcher::{LogEvent, PollingWatcher};
 use anyhow::{Result, anyhow};
-use eframe::egui::{self, Color32, RichText, TextEdit};
+use eframe::egui::{self, Color32, FontId, RichText, TextEdit, TextStyle};
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -256,6 +256,26 @@ impl GuiApp {
         } else {
             ctx.set_visuals(egui::Visuals::dark());
         }
+
+        let base = self.config.gui_font_size.clamp(8.0, 40.0);
+        let mut style = (*ctx.style()).clone();
+        style.text_styles.insert(
+            TextStyle::Small,
+            FontId::proportional((base - 2.0).max(8.0)),
+        );
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::proportional(base));
+        style
+            .text_styles
+            .insert(TextStyle::Button, FontId::proportional(base));
+        style
+            .text_styles
+            .insert(TextStyle::Monospace, FontId::monospace(base));
+        style
+            .text_styles
+            .insert(TextStyle::Heading, FontId::proportional(base + 4.0));
+        ctx.set_style(style);
     }
 }
 
@@ -285,6 +305,12 @@ impl eframe::App for GuiApp {
                 }
                 ui.separator();
                 ui.checkbox(&mut self.config.gui_light_mode, "Light Mode");
+                ui.label("Font");
+                ui.add(
+                    egui::DragValue::new(&mut self.config.gui_font_size)
+                        .speed(0.25)
+                        .range(8.0..=40.0),
+                );
                 ui.separator();
                 let can_start = validation_error.is_none();
                 if ui
@@ -360,6 +386,14 @@ impl eframe::App for GuiApp {
                 });
                 ui.checkbox(&mut self.config.show_timestamps, "Show timestamps");
                 ui.checkbox(&mut self.config.gui_light_mode, "Light mode");
+                ui.horizontal(|ui| {
+                    ui.label("GUI font size");
+                    ui.add(
+                        egui::DragValue::new(&mut self.config.gui_font_size)
+                            .speed(0.25)
+                            .range(8.0..=40.0),
+                    );
+                });
                 ui.checkbox(
                     &mut self.config.case_insensitive_text_filter,
                     "Case-insensitive text filter",

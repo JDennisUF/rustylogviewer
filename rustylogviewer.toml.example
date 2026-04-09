@@ -3,6 +3,7 @@ max_buffer_lines = 10000
 max_line_len = 512
 show_timestamps = true
 gui_light_mode = false
+gui_font_size = 14.0
 case_insensitive_text_filter = true
 
 # Lines matching blacklist patterns are hidden unless they also match a whitelist pattern.

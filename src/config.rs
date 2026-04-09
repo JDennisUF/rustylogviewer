@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub max_line_len: usize,
     pub show_timestamps: bool,
     pub gui_light_mode: bool,
+    pub gui_font_size: f32,
     pub case_insensitive_text_filter: bool,
     pub blacklist_regex: Vec<String>,
     pub whitelist_regex: Vec<String>,
@@ -32,6 +33,7 @@ impl Default for AppConfig {
             max_line_len: DEFAULT_MAX_LINE_LEN,
             show_timestamps: true,
             gui_light_mode: false,
+            gui_font_size: 14.0,
             case_insensitive_text_filter: true,
             blacklist_regex: Vec::new(),
             whitelist_regex: Vec::new(),
@@ -76,6 +78,7 @@ impl AppConfig {
         let _ = writeln!(summary, "  max_line_len: {}", self.max_line_len);
         let _ = writeln!(summary, "  show_timestamps: {}", self.show_timestamps);
         let _ = writeln!(summary, "  gui_light_mode: {}", self.gui_light_mode);
+        let _ = writeln!(summary, "  gui_font_size: {}", self.gui_font_size);
         let _ = writeln!(
             summary,
             "  case_insensitive_text_filter: {}",
@@ -114,6 +117,9 @@ impl AppConfig {
         if self.max_line_len == 0 {
             return Err(ConfigValidationError::InvalidMaxLineLength(self.max_line_len).into());
         }
+        if !self.gui_font_size.is_finite() || self.gui_font_size <= 0.0 {
+            return Err(ConfigValidationError::InvalidGuiFontSize(self.gui_font_size).into());
+        }
         if self.tracked_files.is_empty() {
             return Err(ConfigValidationError::NoTrackedFiles.into());
         }
@@ -148,6 +154,7 @@ struct FileConfig {
     max_line_len: Option<usize>,
     show_timestamps: Option<bool>,
     gui_light_mode: Option<bool>,
+    gui_font_size: Option<f32>,
     case_insensitive_text_filter: Option<bool>,
     blacklist_regex: Option<Vec<String>>,
     whitelist_regex: Option<Vec<String>>,
@@ -161,6 +168,8 @@ pub enum ConfigValidationError {
     InvalidMaxBufferLines(usize),
     #[error("max_line_len must be > 0, got {0}")]
     InvalidMaxLineLength(usize),
+    #[error("gui_font_size must be > 0 and finite, got {0}")]
+    InvalidGuiFontSize(f32),
     #[error("no tracked files configured; pass FILE arguments or set tracked_files in config")]
     NoTrackedFiles,
     #[error("tracked files contains an empty path")]
@@ -199,6 +208,9 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig
         }
         if let Some(v) = file_cfg.gui_light_mode {
             config.gui_light_mode = v;
+        }
+        if let Some(v) = file_cfg.gui_font_size {
+            config.gui_font_size = v;
         }
         if let Some(v) = file_cfg.case_insensitive_text_filter {
             config.case_insensitive_text_filter = v;
@@ -268,6 +280,7 @@ max_buffer_lines = 7777
 max_line_len = 256
 show_timestamps = false
 gui_light_mode = true
+gui_font_size = 16.0
 case_insensitive_text_filter = false
 blacklist_regex = ["DEBUG.*"]
 whitelist_regex = ["DEBUG.*critical"]
@@ -297,6 +310,7 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_line_len, 256);
         assert!(!config.show_timestamps);
         assert!(config.gui_light_mode);
+        assert_eq!(config.gui_font_size, 16.0);
         assert!(!config.case_insensitive_text_filter);
         assert_eq!(config.blacklist_regex, vec!["DEBUG.*".to_string()]);
         assert_eq!(config.whitelist_regex, vec!["DEBUG.*critical".to_string()]);
@@ -312,6 +326,7 @@ max_buffer_lines = 7777
 max_line_len = 256
 show_timestamps = false
 gui_light_mode = true
+gui_font_size = 15.0
 case_insensitive_text_filter = false
 blacklist_regex = ["x"]
 whitelist_regex = ["y"]
@@ -341,6 +356,7 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_line_len, 80);
         assert!(config.show_timestamps);
         assert!(config.gui_light_mode);
+        assert_eq!(config.gui_font_size, 15.0);
         assert!(config.case_insensitive_text_filter);
         assert_eq!(config.blacklist_regex, vec!["ERROR".to_string()]);
         assert_eq!(config.whitelist_regex, vec!["ERROR keep".to_string()]);
@@ -394,5 +410,39 @@ tracked_files = ["./a.log", "./b.log"]
 
         let err = AppConfig::from_cli(&cli).expect_err("invalid regex should fail");
         assert!(err.to_string().contains("regex"));
+    }
+
+    #[test]
+    fn rejects_invalid_gui_font_size() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+gui_light_mode = false
+gui_font_size = 0.0
+tracked_files = ["/tmp/app.log"]
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let err = AppConfig::from_cli(&cli).expect_err("invalid gui font size should fail");
+        assert!(err.to_string().contains("gui_font_size"));
     }
 }

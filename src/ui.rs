@@ -363,6 +363,7 @@ mod tests {
             max_line_len: 256,
             show_timestamps: true,
             gui_light_mode: false,
+            gui_font_size: 14.0,
             case_insensitive_text_filter: true,
             blacklist_regex: Vec::new(),
             whitelist_regex: Vec::new(),

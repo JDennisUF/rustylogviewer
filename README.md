@@ -101,6 +101,7 @@ Current GUI supports:
 
 - `Open Config`, `New Config`, `Save`, and `Save As`
 - selectable `Light Mode` (persisted as `gui_light_mode` in config)
+- configurable GUI font size (persisted as `gui_font_size`)
 - form-based editing for:
   - general settings
   - tracked files

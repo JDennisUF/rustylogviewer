@@ -27,6 +27,7 @@
 - [x] Add case-insensitive text filtering and regex blacklist/whitelist rules
 - [x] Add graphical UI frontend scaffold for Windows/Linux (`--gui`)
 - [x] Add user-selectable GUI light mode
+- [x] Add user-selectable GUI font size control
 
 ## GUI Notes
 

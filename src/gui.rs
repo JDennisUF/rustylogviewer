@@ -465,8 +465,16 @@ impl eframe::App for GuiApp {
                 }
                 ui.separator();
                 let can_start = validation_error.is_none();
+                let start_button = egui::Button::new(
+                    RichText::new("Start").strong().color(Color32::WHITE),
+                )
+                .fill(if self.config.gui_light_mode {
+                    Color32::from_rgb(46, 160, 67)
+                } else {
+                    Color32::from_rgb(38, 174, 96)
+                });
                 if ui
-                    .add_enabled(!self.running && can_start, egui::Button::new("Start"))
+                    .add_enabled(!self.running && can_start, start_button)
                     .clicked()
                 {
                     self.start_stream();

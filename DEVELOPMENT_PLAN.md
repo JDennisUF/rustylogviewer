@@ -222,3 +222,153 @@ Manual smoke checks:
 3. Build polling watcher with append/truncate handling and tests.
 4. Add basic merged-feed TUI and keybindings.
 5. Tune performance and finalize README for v0.1.
+
+## 14. Current State (Completed)
+
+- Core polling engine implemented with append/truncate/replace handling.
+- TUI implemented with merged feed, pause/scroll, source filter, and text filter.
+- Regex blacklist/whitelist rules implemented with whitelist precedence.
+- Headless mode implemented.
+- Unit and integration tests in place.
+
+## 15. GUI Plan (Windows + Linux)
+
+### 15.1 GUI Goals
+
+- Provide a graphical desktop UI that works on Windows and Linux.
+- Keep the single merged log feed experience from TUI.
+- Let users open/select a config file from inside the app.
+- Let users create and edit config files in-app with a simple form UI.
+- Keep resource usage reasonable for dev VMs.
+
+### 15.2 Proposed GUI Stack
+
+- GUI framework: `egui` via `eframe` (cross-platform native desktop).
+- Native file dialogs: `rfd` (open/save config, add tracked log files).
+- Config serialization: keep existing TOML format (`serde` + `toml`).
+
+Rationale:
+- `eframe/egui` is fast to ship, cross-platform, and integrates well with existing Rust core logic.
+
+### 15.3 Architecture for Dual Frontends
+
+1. Keep core behavior in library modules:
+- config loading/validation
+- watcher/polling engine
+- regex line rules
+
+2. Frontends:
+- Existing TUI frontend stays available.
+- New GUI frontend added as another runtime path.
+
+3. Shared engine contract:
+- GUI and TUI both consume a shared event stream and filtering behavior.
+
+### 15.4 GUI Information Architecture
+
+Main window layout:
+- Top toolbar:
+  - `Open Config`
+  - `Save`
+  - `Save As`
+  - `Start/Stop`
+  - `Pause/Resume`
+- Left sidebar:
+  - tracked file list
+  - source filter controls
+  - quick counters
+- Main panel:
+  - merged log feed table/list
+  - compact line format with timestamp + source + message
+- Bottom status bar:
+  - polling interval
+  - total seen
+  - suppressed by rules
+  - retained buffer
+
+### 15.5 Config File Workflow (In-App)
+
+Supported workflow:
+- Open an existing TOML config from file picker.
+- Create new config from defaults.
+- Edit config in form-based panels.
+- Save back to same file or Save As new file.
+
+Form sections:
+- General settings:
+  - poll interval
+  - max buffer lines
+  - max line length
+  - timestamp display
+  - case-insensitive text filtering
+- Tracked files:
+  - add via file picker
+  - remove selected
+  - reorder optional (later)
+- Rule lists:
+  - blacklist regex entries
+  - whitelist regex entries
+  - inline regex validation errors
+
+Validation UX:
+- Invalid regex or invalid numeric settings shown inline.
+- Disable `Start` when effective config is invalid.
+
+### 15.6 Config Storage Decision
+
+- Continue using external TOML config files as source of truth.
+- App edits the selected TOML file directly on save.
+- Add lightweight app state file later (optional) for:
+  - last opened config path
+  - recent config files list
+  - window/layout preferences
+
+### 15.7 New Milestones
+
+### Milestone 5: GUI Bootstrap
+- Add `eframe` app shell and run loop.
+- Add entrypoint flag to start GUI mode.
+- Render placeholder panes and status.
+
+Deliverable:
+- GUI app opens on Windows/Linux and shows static layout.
+
+### Milestone 6: Live Feed in GUI
+- Connect watcher engine to GUI update loop.
+- Display merged live feed.
+- Add pause/resume and source filter.
+
+Deliverable:
+- GUI shows live log updates in one view.
+
+### Milestone 7: Config File Open/Save
+- Add `Open Config`, `Save`, `Save As`.
+- Load/validate TOML from selected path.
+- Reflect loaded config in runtime behavior.
+
+Deliverable:
+- Users can select config file in app and run viewer with it.
+
+### Milestone 8: In-App Config Editor
+- Add form UI for all core config fields.
+- Add file list editor and regex list editor.
+- Add inline validation and dirty-state tracking.
+
+Deliverable:
+- Users can edit and save configs entirely in app.
+
+### Milestone 9: Cross-Platform Packaging + QA
+- Windows and Linux smoke tests.
+- Basic packaging instructions.
+- Performance pass for idle/update behavior.
+
+Deliverable:
+- Usable GUI release candidate for both platforms.
+
+## 16. GUI Acceptance Criteria
+
+- App launches and functions on Windows and Linux.
+- User can open an existing config file from GUI.
+- User can edit tracked files and regex rules via UI and save.
+- Invalid regex is clearly surfaced before starting stream.
+- Merged feed remains compact and responsive during live updates.

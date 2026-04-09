@@ -8,6 +8,7 @@
 - Compact TUI feed (default mode) with key controls.
 - Headless stdout mode for simple pipelines.
 - Bounded in-memory line buffer with dropped-event counter.
+- GUI frontend is planned (Windows/Linux), not implemented yet.
 
 ## Build
 
@@ -70,3 +71,14 @@ Regex rules:
 ## Config Example
 
 See [`rustylogviewer.toml.example`](./rustylogviewer.toml.example).
+
+## GUI Roadmap
+
+A cross-platform graphical UI is planned using `eframe/egui` with:
+
+- in-app config file chooser (`Open Config`)
+- in-app config editor for tracked files and regex rule lists
+- save/save-as config workflow
+- merged live feed similar to current TUI behavior
+
+Details are tracked in [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md).

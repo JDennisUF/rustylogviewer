@@ -24,21 +24,28 @@ pub fn run_tui(config: AppConfig) -> Result<()> {
     let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     let mut next_poll = Instant::now();
+    let mut dirty = true;
     loop {
         if !state.paused && Instant::now() >= next_poll {
             let events = watcher.poll()?;
-            state.push_events(events, config.max_buffer_lines);
+            if !events.is_empty() {
+                state.push_events(events, config.max_buffer_lines);
+                dirty = true;
+            }
             next_poll = Instant::now() + poll_interval;
         }
 
-        terminal.draw(|frame| render(frame, &state, &config))?;
+        if dirty {
+            terminal.draw(|frame| render(frame, &state, &config))?;
+            dirty = false;
+        }
 
         let timeout = if state.paused {
-            Duration::from_millis(250)
+            Duration::from_millis(500)
         } else {
             next_poll
                 .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(250))
+                .min(Duration::from_millis(500))
         };
 
         if !event::poll(timeout)? {
@@ -54,6 +61,7 @@ pub fn run_tui(config: AppConfig) -> Result<()> {
         if state.handle_key(key.code) {
             break;
         }
+        dirty = true;
     }
     Ok(())
 }
@@ -92,6 +100,8 @@ fn render(frame: &mut Frame<'_>, state: &TuiState, config: &AppConfig) {
 #[derive(Debug)]
 struct TuiState {
     events: VecDeque<LogEvent>,
+    total_events_seen: u64,
+    dropped_events: u64,
     paused: bool,
     scroll_offset: usize,
     sources: Vec<String>,
@@ -112,6 +122,8 @@ impl TuiState {
 
         Self {
             events: VecDeque::with_capacity(config.max_buffer_lines),
+            total_events_seen: 0,
+            dropped_events: 0,
             paused: false,
             scroll_offset: 0,
             sources,
@@ -121,9 +133,11 @@ impl TuiState {
 
     fn push_events(&mut self, events: Vec<LogEvent>, max_buffer_lines: usize) {
         for event in events {
+            self.total_events_seen += 1;
             self.events.push_back(event);
             while self.events.len() > max_buffer_lines {
                 self.events.pop_front();
+                self.dropped_events += 1;
             }
         }
         if self.scroll_offset > 0 {
@@ -171,10 +185,12 @@ impl TuiState {
             None => "filter=all".to_string(),
         };
         format!(
-            "rustylogviewer  files={}  poll={}ms  lines={}  {}  {}  keys:q quit p pause j/k scroll g/G f",
+            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  {}  {}  keys:q quit p pause j/k scroll g/G f",
             self.sources.len(),
             config.poll_interval_ms,
             self.events.len(),
+            self.total_events_seen,
+            self.dropped_events,
             if self.paused { "paused" } else { "live" },
             filter_label
         )

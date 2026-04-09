@@ -12,6 +12,42 @@ use std::time::{Duration, Instant};
 const DEFAULT_WINDOW_WIDTH: f32 = 1400.0;
 const DEFAULT_WINDOW_HEIGHT: f32 = 900.0;
 const MAX_RECENT_CONFIGS: usize = 10;
+const EXE_QUICK_START_LINES: &[&str] = &[
+    r#"rustylogviewer.exe --gui"#,
+    r#"rustylogviewer.exe --gui --config ".\configs\team.toml""#,
+    r#"rustylogviewer.exe --headless --config ".\configs\team.toml""#,
+    r#"rustylogviewer.exe --print-config-only --config ".\configs\team.toml""#,
+    r#"rustylogviewer.exe "C:\logs\app.log" "C:\logs\worker.log""#,
+];
+const EXE_OPTION_LINES: &[&str] = &[
+    "--gui                      Open graphical desktop window",
+    "--headless                 Print matching events to stdout (no GUI/TUI)",
+    "--config <PATH>            Load TOML config file",
+    "--print-config-only        Validate config, print effective config, and exit",
+    "--poll-ms <N>              Override poll interval in milliseconds",
+    "--max-buffer-lines <N>     Override in-memory retained line limit",
+    "--max-line-len <N>         Override per-line truncation limit",
+    "--show-timestamps          Force timestamps on output",
+    "--no-timestamps            Disable timestamps on output",
+    "--case-insensitive-filter  Text filter matches case-insensitively",
+    "--case-sensitive-filter    Text filter matches case-sensitively",
+    "--blacklist-regex <REGEX>  Suppress matching lines (repeatable)",
+    "--whitelist-regex <REGEX>  Force-keep matching lines (repeatable)",
+    "<FILE>...                  Log files to watch (overrides config tracked_files)",
+];
+const WINDOWS_SHORTCUT_LINES: &[&str] = &[
+    r#"1. Right-click desktop, choose New > Shortcut"#,
+    r#"2. Target example: "C:\tools\rustylogviewer.exe" --gui --config "C:\tools\configs\team.toml""#,
+    r#"3. Set Start in to the folder containing the exe/configs"#,
+    r#"4. Create one shortcut per config so users can launch the right view quickly"#,
+];
+const CARGO_QUICK_START_LINES: &[&str] = &[
+    "cargo run -- --gui",
+    "cargo run -- --gui --config ./rustylogviewer.toml",
+    "cargo run -- --headless --config ./rustylogviewer.toml",
+    "cargo run -- --print-config-only --config ./rustylogviewer.toml",
+    "cargo run -- ./app.log ./worker.log",
+];
 
 pub fn run_gui(initial_config_path: Option<PathBuf>) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -83,7 +119,10 @@ impl DisplayEvent {
 impl GuiApp {
     fn new(initial_config_path: Option<PathBuf>) -> Self {
         let state_file_path = gui_state_file_path();
-        let recent_configs = load_recent_configs(state_file_path.as_deref()).unwrap_or_default();
+        let mut recent_configs =
+            load_recent_configs(state_file_path.as_deref()).unwrap_or_default();
+        let discovered_configs = discover_startup_configs();
+        merge_discovered_configs(&mut recent_configs, discovered_configs);
         let mut app = Self {
             config: AppConfig::default(),
             config_path: None,
@@ -404,6 +443,42 @@ impl GuiApp {
             }
         }
     }
+
+    fn clear_displayed_logs(&mut self) {
+        self.events.clear();
+        self.total_seen = 0;
+        self.dropped = 0;
+        self.suppressed_by_rules = 0;
+        self.status_message = "Cleared displayed log output".to_string();
+    }
+
+    fn visible_log_copy_payload(&self) -> (usize, String) {
+        let lower_text_filter =
+            if self.config.case_insensitive_text_filter && !self.text_filter.is_empty() {
+                Some(self.text_filter.to_lowercase())
+            } else {
+                None
+            };
+
+        let mut lines = String::new();
+        let mut count = 0usize;
+        for event in &self.events {
+            if !self.display_matches_filters(event, &lower_text_filter) {
+                continue;
+            }
+            let line = if self.config.show_timestamps {
+                &event.with_ts
+            } else {
+                &event.without_ts
+            };
+            if count > 0 {
+                lines.push('\n');
+            }
+            lines.push_str(line);
+            count += 1;
+        }
+        (count, lines)
+    }
 }
 
 fn gui_state_file_path() -> Option<PathBuf> {
@@ -436,8 +511,103 @@ fn load_recent_configs(path: Option<&Path>) -> Result<Vec<PathBuf>> {
     Ok(deduped)
 }
 
+fn merge_discovered_configs(recent_configs: &mut Vec<PathBuf>, discovered_configs: Vec<PathBuf>) {
+    for path in discovered_configs {
+        if recent_configs.iter().any(|existing| existing == &path) {
+            continue;
+        }
+        recent_configs.push(path);
+    }
+}
+
+fn discover_startup_configs() -> Vec<PathBuf> {
+    let search_roots = default_config_search_roots();
+    discover_app_configs_in_roots(&search_roots)
+}
+
+fn default_config_search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if !roots.iter().any(|existing| existing == &cwd) {
+            roots.push(cwd);
+        }
+    }
+    roots
+}
+
+fn discover_app_configs_in_roots(search_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut discovered = Vec::new();
+    for root in search_roots {
+        let read_dir = match std::fs::read_dir(root) {
+            Ok(read_dir) => read_dir,
+            Err(_) => continue,
+        };
+
+        let mut root_configs = Vec::new();
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let is_toml = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
+            if !is_toml {
+                continue;
+            }
+            if AppConfig::from_file(&path).is_ok() {
+                root_configs.push(path);
+            }
+        }
+
+        root_configs.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+        for path in root_configs {
+            if discovered.iter().any(|existing| existing == &path) {
+                continue;
+            }
+            discovered.push(path);
+        }
+    }
+    discovered
+}
+
 fn select_startup_config(initial: Option<PathBuf>, recent: &[PathBuf]) -> Option<PathBuf> {
     initial.or_else(|| recent.first().cloned())
+}
+
+fn render_startup_help(ui: &mut egui::Ui) {
+    ui.heading("Command Line Quick Start");
+    ui.label("Most users run the .exe directly.");
+
+    ui.separator();
+    ui.label(RichText::new("Windows .exe commands").strong());
+    for line in EXE_QUICK_START_LINES {
+        ui.label(RichText::new(*line).monospace());
+    }
+
+    ui.separator();
+    ui.label(RichText::new("CLI options").strong());
+    for line in EXE_OPTION_LINES {
+        ui.label(RichText::new(*line).monospace());
+    }
+
+    ui.separator();
+    ui.label(RichText::new("Windows shortcut setup").strong());
+    for line in WINDOWS_SHORTCUT_LINES {
+        ui.label(RichText::new(*line).monospace());
+    }
+
+    ui.separator();
+    ui.label(RichText::new("Cargo commands (developers)").strong());
+    for line in CARGO_QUICK_START_LINES {
+        ui.label(RichText::new(*line).monospace());
+    }
 }
 
 #[cfg(test)]
@@ -495,6 +665,70 @@ mod tests {
             Some(PathBuf::from("/tmp/recent.toml"))
         );
         assert_eq!(select_startup_config(None, &[]), None);
+    }
+
+    #[test]
+    fn discover_app_configs_in_roots_filters_and_orders() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a.toml");
+        let b = dir.path().join("b.toml");
+        let invalid = dir.path().join("not-app.toml");
+        let non_toml = dir.path().join("notes.txt");
+
+        std::fs::write(
+            &b,
+            r#"
+tracked_files = ["/tmp/two.log"]
+"#,
+        )
+        .expect("write b");
+        std::fs::write(
+            &a,
+            r#"
+tracked_files = ["/tmp/one.log"]
+"#,
+        )
+        .expect("write a");
+        std::fs::write(&invalid, "poll_interval_ms = 1000").expect("write invalid");
+        std::fs::write(&non_toml, "tracked_files = [\"/tmp/nope.log\"]").expect("write text");
+
+        let discovered = discover_app_configs_in_roots(&[dir.path().to_path_buf()]);
+        assert_eq!(discovered, vec![a, b]);
+    }
+
+    #[test]
+    fn merge_discovered_configs_keeps_mru_order_and_appends_unique() {
+        let mut recent_configs = vec![
+            PathBuf::from("/tmp/recent.toml"),
+            PathBuf::from("/tmp/shared.toml"),
+        ];
+        let discovered = vec![
+            PathBuf::from("/tmp/shared.toml"),
+            PathBuf::from("/tmp/discovered.toml"),
+        ];
+
+        merge_discovered_configs(&mut recent_configs, discovered);
+
+        assert_eq!(
+            recent_configs,
+            vec![
+                PathBuf::from("/tmp/recent.toml"),
+                PathBuf::from("/tmp/shared.toml"),
+                PathBuf::from("/tmp/discovered.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn startup_help_lists_core_exe_options() {
+        let options_text = EXE_OPTION_LINES.join("\n");
+        let usage_text = EXE_QUICK_START_LINES.join("\n");
+        let shortcut_text = WINDOWS_SHORTCUT_LINES.join("\n");
+
+        assert!(usage_text.contains("rustylogviewer.exe --gui"));
+        assert!(options_text.contains("--config <PATH>"));
+        assert!(options_text.contains("--blacklist-regex <REGEX>"));
+        assert!(shortcut_text.contains("New > Shortcut"));
     }
 }
 
@@ -773,6 +1007,7 @@ impl eframe::App for GuiApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            let show_startup_help = !self.running && self.events.is_empty();
             ui.horizontal(|ui| {
                 ui.label("Source");
                 egui::ComboBox::from_id_salt("source-filter")
@@ -794,9 +1029,26 @@ impl eframe::App for GuiApp {
                     self.text_filter.clear();
                     self.source_filter = None;
                 }
+                if ui.button("Copy Visible").clicked() {
+                    let (line_count, payload) = self.visible_log_copy_payload();
+                    if line_count == 0 {
+                        self.status_message = "No visible log lines to copy".to_string();
+                    } else {
+                        ui.ctx().copy_text(payload);
+                        self.status_message =
+                            format!("Copied {} visible log lines to clipboard", line_count);
+                    }
+                }
+                if ui.button("Clear Logs").clicked() {
+                    self.clear_displayed_logs();
+                }
             });
 
             ui.separator();
+            if show_startup_help {
+                render_startup_help(ui);
+                ui.separator();
+            }
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)

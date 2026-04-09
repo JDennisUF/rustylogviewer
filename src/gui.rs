@@ -42,6 +42,7 @@ struct GuiApp {
     last_poll_at: Instant,
     text_filter: String,
     source_filter: Option<String>,
+    config_panel_visible: bool,
 }
 
 impl GuiApp {
@@ -61,6 +62,7 @@ impl GuiApp {
             last_poll_at: Instant::now(),
             text_filter: String::new(),
             source_filter: None,
+            config_panel_visible: true,
         };
 
         if let Some(path) = initial_config_path {
@@ -304,13 +306,14 @@ impl eframe::App for GuiApp {
                     self.save_config_as();
                 }
                 ui.separator();
-                ui.checkbox(&mut self.config.gui_light_mode, "Light Mode");
-                ui.label("Font");
-                ui.add(
-                    egui::DragValue::new(&mut self.config.gui_font_size)
-                        .speed(0.25)
-                        .range(8.0..=40.0),
-                );
+                let toggle_label = if self.config_panel_visible {
+                    "Hide Configuration"
+                } else {
+                    "Show Configuration"
+                };
+                if ui.button(toggle_label).clicked() {
+                    self.config_panel_visible = !self.config_panel_visible;
+                }
                 ui.separator();
                 let can_start = validation_error.is_none();
                 if ui
@@ -338,134 +341,136 @@ impl eframe::App for GuiApp {
             });
         });
 
-        egui::SidePanel::left("config_sidebar")
-            .resizable(true)
-            .min_width(340.0)
-            .show(ctx, |ui| {
-                ui.heading("Configuration");
-                if let Some(path) = &self.config_path {
-                    ui.label(format!("File: {}", path.display()));
-                } else {
-                    ui.label("File: (unsaved)");
-                }
-
-                if let Some(error) = &validation_error {
-                    ui.colored_label(
-                        Color32::from_rgb(220, 110, 110),
-                        format!("Invalid: {}", error),
-                    );
-                } else {
-                    ui.colored_label(Color32::from_rgb(120, 200, 120), "Config valid");
-                }
-
-                ui.separator();
-                ui.label(RichText::new("General").strong());
-                ui.horizontal(|ui| {
-                    ui.label("Poll (ms)");
-                    ui.add(
-                        egui::DragValue::new(&mut self.config.poll_interval_ms)
-                            .speed(10.0)
-                            .range(1..=120_000),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Max buffer lines");
-                    ui.add(
-                        egui::DragValue::new(&mut self.config.max_buffer_lines)
-                            .speed(100.0)
-                            .range(1..=1_000_000),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Max line length");
-                    ui.add(
-                        egui::DragValue::new(&mut self.config.max_line_len)
-                            .speed(10.0)
-                            .range(1..=65_536),
-                    );
-                });
-                ui.checkbox(&mut self.config.show_timestamps, "Show timestamps");
-                ui.checkbox(&mut self.config.gui_light_mode, "Light mode");
-                ui.horizontal(|ui| {
-                    ui.label("GUI font size");
-                    ui.add(
-                        egui::DragValue::new(&mut self.config.gui_font_size)
-                            .speed(0.25)
-                            .range(8.0..=40.0),
-                    );
-                });
-                ui.checkbox(
-                    &mut self.config.case_insensitive_text_filter,
-                    "Case-insensitive text filter",
-                );
-
-                ui.separator();
-                ui.label(RichText::new("Tracked Files").strong());
-                let mut remove_file_idx = None;
-                for (idx, path) in self.config.tracked_files.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        let mut value = path.display().to_string();
-                        if ui
-                            .add(TextEdit::singleline(&mut value).desired_width(220.0))
-                            .changed()
-                        {
-                            *path = PathBuf::from(value);
-                        }
-                        if ui.small_button("X").clicked() {
-                            remove_file_idx = Some(idx);
-                        }
-                    });
-                }
-                if let Some(idx) = remove_file_idx {
-                    self.config.tracked_files.remove(idx);
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("Add File").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.config.tracked_files.push(path);
-                        }
+        if self.config_panel_visible {
+            egui::SidePanel::left("config_sidebar")
+                .resizable(true)
+                .min_width(340.0)
+                .show(ctx, |ui| {
+                    ui.heading("Configuration");
+                    if let Some(path) = &self.config_path {
+                        ui.label(format!("File: {}", path.display()));
+                    } else {
+                        ui.label("File: (unsaved)");
                     }
-                    if ui.button("Add Empty").clicked() {
-                        self.config.tracked_files.push(PathBuf::new());
+
+                    if let Some(error) = &validation_error {
+                        ui.colored_label(
+                            Color32::from_rgb(220, 110, 110),
+                            format!("Invalid: {}", error),
+                        );
+                    } else {
+                        ui.colored_label(Color32::from_rgb(120, 200, 120), "Config valid");
+                    }
+
+                    ui.separator();
+                    ui.label(RichText::new("General").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Poll (ms)");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.poll_interval_ms)
+                                .speed(10.0)
+                                .range(1..=120_000),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Max buffer lines");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.max_buffer_lines)
+                                .speed(100.0)
+                                .range(1..=1_000_000),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Max line length");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.max_line_len)
+                                .speed(10.0)
+                                .range(1..=65_536),
+                        );
+                    });
+                    ui.checkbox(&mut self.config.show_timestamps, "Show timestamps");
+                    ui.checkbox(&mut self.config.gui_light_mode, "Light mode");
+                    ui.horizontal(|ui| {
+                        ui.label("GUI font size");
+                        ui.add(
+                            egui::DragValue::new(&mut self.config.gui_font_size)
+                                .speed(0.25)
+                                .range(8.0..=40.0),
+                        );
+                    });
+                    ui.checkbox(
+                        &mut self.config.case_insensitive_text_filter,
+                        "Case-insensitive text filter",
+                    );
+
+                    ui.separator();
+                    ui.label(RichText::new("Tracked Files").strong());
+                    let mut remove_file_idx = None;
+                    for (idx, path) in self.config.tracked_files.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            let mut value = path.display().to_string();
+                            if ui
+                                .add(TextEdit::singleline(&mut value).desired_width(220.0))
+                                .changed()
+                            {
+                                *path = PathBuf::from(value);
+                            }
+                            if ui.small_button("X").clicked() {
+                                remove_file_idx = Some(idx);
+                            }
+                        });
+                    }
+                    if let Some(idx) = remove_file_idx {
+                        self.config.tracked_files.remove(idx);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Add File").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                self.config.tracked_files.push(path);
+                            }
+                        }
+                        if ui.button("Add Empty").clicked() {
+                            self.config.tracked_files.push(PathBuf::new());
+                        }
+                    });
+
+                    ui.separator();
+                    ui.label(RichText::new("Blacklist Regex").strong());
+                    let mut remove_blacklist_idx = None;
+                    for (idx, pattern) in self.config.blacklist_regex.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add(TextEdit::singleline(pattern).desired_width(220.0));
+                            if ui.small_button("X").clicked() {
+                                remove_blacklist_idx = Some(idx);
+                            }
+                        });
+                    }
+                    if let Some(idx) = remove_blacklist_idx {
+                        self.config.blacklist_regex.remove(idx);
+                    }
+                    if ui.button("Add Blacklist Pattern").clicked() {
+                        self.config.blacklist_regex.push(String::new());
+                    }
+
+                    ui.separator();
+                    ui.label(RichText::new("Whitelist Regex").strong());
+                    let mut remove_whitelist_idx = None;
+                    for (idx, pattern) in self.config.whitelist_regex.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add(TextEdit::singleline(pattern).desired_width(220.0));
+                            if ui.small_button("X").clicked() {
+                                remove_whitelist_idx = Some(idx);
+                            }
+                        });
+                    }
+                    if let Some(idx) = remove_whitelist_idx {
+                        self.config.whitelist_regex.remove(idx);
+                    }
+                    if ui.button("Add Whitelist Pattern").clicked() {
+                        self.config.whitelist_regex.push(String::new());
                     }
                 });
-
-                ui.separator();
-                ui.label(RichText::new("Blacklist Regex").strong());
-                let mut remove_blacklist_idx = None;
-                for (idx, pattern) in self.config.blacklist_regex.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.add(TextEdit::singleline(pattern).desired_width(220.0));
-                        if ui.small_button("X").clicked() {
-                            remove_blacklist_idx = Some(idx);
-                        }
-                    });
-                }
-                if let Some(idx) = remove_blacklist_idx {
-                    self.config.blacklist_regex.remove(idx);
-                }
-                if ui.button("Add Blacklist Pattern").clicked() {
-                    self.config.blacklist_regex.push(String::new());
-                }
-
-                ui.separator();
-                ui.label(RichText::new("Whitelist Regex").strong());
-                let mut remove_whitelist_idx = None;
-                for (idx, pattern) in self.config.whitelist_regex.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.add(TextEdit::singleline(pattern).desired_width(220.0));
-                        if ui.small_button("X").clicked() {
-                            remove_whitelist_idx = Some(idx);
-                        }
-                    });
-                }
-                if let Some(idx) = remove_whitelist_idx {
-                    self.config.whitelist_regex.remove(idx);
-                }
-                if ui.button("Add Whitelist Pattern").clicked() {
-                    self.config.whitelist_regex.push(String::new());
-                }
-            });
+        }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             let mode = if self.running {

@@ -30,6 +30,8 @@ GUI with preloaded config:
 cargo run -- --gui --config ./rustylogviewer.toml
 ```
 
+When `--gui` is started without `--config`, the app auto-loads the most recent config from MRU (if available).
+
 TUI mode (default):
 
 ```bash

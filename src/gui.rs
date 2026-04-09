@@ -76,10 +76,8 @@ impl GuiApp {
             config_panel_visible: true,
         };
 
-        if let Some(path) = initial_config_path {
+        if let Some(path) = select_startup_config(initial_config_path, &app.recent_configs) {
             app.open_config(path);
-        } else if !app.recent_configs.is_empty() {
-            app.status_message = "Ready. Open a config or choose one from Recent.".to_string();
         }
         app
     }
@@ -363,6 +361,10 @@ fn load_recent_configs(path: Option<&Path>) -> Result<Vec<PathBuf>> {
     Ok(deduped)
 }
 
+fn select_startup_config(initial: Option<PathBuf>, recent: &[PathBuf]) -> Option<PathBuf> {
+    initial.or_else(|| recent.first().cloned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +404,22 @@ mod tests {
             1
         );
         assert!(!recents.iter().any(|p| p.as_os_str().is_empty()));
+    }
+
+    #[test]
+    fn select_startup_config_prefers_cli_then_mru() {
+        let cli_path = PathBuf::from("/tmp/cli.toml");
+        let mru = vec![PathBuf::from("/tmp/recent.toml")];
+
+        assert_eq!(
+            select_startup_config(Some(cli_path.clone()), &mru),
+            Some(cli_path)
+        );
+        assert_eq!(
+            select_startup_config(None, &mru),
+            Some(PathBuf::from("/tmp/recent.toml"))
+        );
+        assert_eq!(select_startup_config(None, &[]), None);
     }
 }
 

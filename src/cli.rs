@@ -36,6 +36,10 @@ pub struct CliArgs {
     #[arg(long, action = ArgAction::SetTrue)]
     pub print_config_only: bool,
 
+    /// Run without TUI and print events to stdout.
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub headless: bool,
+
     /// Files to track. If present, overrides `tracked_files` from config.
     #[arg(value_name = "FILE")]
     pub files: Vec<PathBuf>,

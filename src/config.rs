@@ -181,6 +181,7 @@ tracked_files = ["./a.log", "./b.log"]
             show_timestamps: false,
             no_timestamps: false,
             print_config_only: false,
+            headless: false,
             files: Vec::new(),
         };
         let config = AppConfig::from_cli(&cli).expect("valid config");
@@ -211,6 +212,7 @@ tracked_files = ["./a.log", "./b.log"]
             show_timestamps: true,
             no_timestamps: false,
             print_config_only: false,
+            headless: false,
             files: vec![PathBuf::from("/tmp/override.log")],
         };
         let config = AppConfig::from_cli(&cli).expect("valid config");
@@ -235,6 +237,7 @@ tracked_files = ["./a.log", "./b.log"]
             show_timestamps: false,
             no_timestamps: false,
             print_config_only: false,
+            headless: false,
             files: Vec::new(),
         };
 

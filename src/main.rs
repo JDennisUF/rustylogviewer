@@ -1,13 +1,15 @@
 mod cli;
 mod config;
+mod formatting;
+mod ui;
 mod watcher;
 
 use anyhow::Result;
 use clap::Parser;
 use cli::CliArgs;
 use config::AppConfig;
+use formatting::format_event_line;
 use std::time::Duration;
-use time::{OffsetDateTime, UtcOffset, format_description};
 use watcher::PollingWatcher;
 
 fn main() -> Result<()> {
@@ -19,7 +21,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    run_headless(config)
+    if cli.headless {
+        run_headless(config)
+    } else {
+        ui::run_tui(config)
+    }
 }
 
 fn run_headless(config: AppConfig) -> Result<()> {
@@ -34,20 +40,4 @@ fn run_headless(config: AppConfig) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(config.poll_interval_ms));
     }
-}
-
-fn format_event_line(event: &watcher::LogEvent, show_timestamps: bool) -> String {
-    if !show_timestamps {
-        return format!("[{}] {}", event.source, event.line);
-    }
-
-    let time_fragment = local_hms(event.ts).unwrap_or_else(|| "??:??:??".to_string());
-    format!("[{}] [{}] {}", time_fragment, event.source, event.line)
-}
-
-fn local_hms(ts: std::time::SystemTime) -> Option<String> {
-    let fmt = format_description::parse("[hour]:[minute]:[second]").ok()?;
-    let offset = UtcOffset::current_local_offset().ok()?;
-    let datetime = OffsetDateTime::from(ts).to_offset(offset);
-    datetime.format(&fmt).ok()
 }

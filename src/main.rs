@@ -1,16 +1,11 @@
-mod cli;
-mod config;
-mod formatting;
-mod ui;
-mod watcher;
-
 use anyhow::Result;
 use clap::Parser;
-use cli::CliArgs;
-use config::AppConfig;
-use formatting::format_event_line;
+use rustylogviewer::cli::CliArgs;
+use rustylogviewer::config::AppConfig;
+use rustylogviewer::formatting::format_event_line;
+use rustylogviewer::ui;
+use rustylogviewer::watcher::PollingWatcher;
 use std::time::Duration;
-use watcher::PollingWatcher;
 
 fn main() -> Result<()> {
     let cli = CliArgs::parse();

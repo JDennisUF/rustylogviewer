@@ -1,0 +1,10 @@
+poll_interval_ms = 1000
+max_buffer_lines = 10000
+max_line_len = 512
+show_timestamps = true
+
+tracked_files = [
+  "/var/log/app.log",
+  "/tmp/dev.log",
+]
+

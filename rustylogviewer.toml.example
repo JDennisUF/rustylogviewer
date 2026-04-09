@@ -2,9 +2,17 @@ poll_interval_ms = 1000
 max_buffer_lines = 10000
 max_line_len = 512
 show_timestamps = true
+case_insensitive_text_filter = true
+
+# Lines matching blacklist patterns are hidden unless they also match a whitelist pattern.
+blacklist_regex = [
+  #"DEBUG.*",
+]
+whitelist_regex = [
+  #"DEBUG.*important",
+]
 
 tracked_files = [
   "/var/log/app.log",
   "/tmp/dev.log",
 ]
-

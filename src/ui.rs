@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
 use crate::formatting::format_event_line;
+use crate::line_rules::LineRules;
 use crate::watcher::{LogEvent, PollingWatcher};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -16,6 +17,7 @@ use std::time::{Duration, Instant};
 pub fn run_tui(config: AppConfig) -> Result<()> {
     let poll_interval = Duration::from_millis(config.poll_interval_ms);
     let mut watcher = PollingWatcher::new(config.tracked_files.clone(), config.max_line_len)?;
+    let rules = LineRules::new(&config.blacklist_regex, &config.whitelist_regex)?;
     let mut state = TuiState::new(&config);
 
     enable_raw_mode()?;
@@ -29,7 +31,8 @@ pub fn run_tui(config: AppConfig) -> Result<()> {
         if !state.paused && Instant::now() >= next_poll {
             let events = watcher.poll()?;
             if !events.is_empty() {
-                state.push_events(events, config.max_buffer_lines);
+                let (events, suppressed) = rules.partition_events(events);
+                state.push_events(events, suppressed, config.max_buffer_lines);
                 dirty = true;
             }
             next_poll = Instant::now() + poll_interval;
@@ -107,11 +110,14 @@ struct TuiState {
     events: VecDeque<LogEvent>,
     total_events_seen: u64,
     dropped_events: u64,
+    suppressed_by_rules: u64,
     paused: bool,
     scroll_offset: usize,
     sources: Vec<String>,
     active_source_filter_idx: Option<usize>,
     text_filter: String,
+    text_filter_folded: String,
+    case_insensitive_text_filter: bool,
     search_input: String,
     input_mode: InputMode,
 }
@@ -138,17 +144,21 @@ impl TuiState {
             events: VecDeque::with_capacity(config.max_buffer_lines),
             total_events_seen: 0,
             dropped_events: 0,
+            suppressed_by_rules: 0,
             paused: false,
             scroll_offset: 0,
             sources,
             active_source_filter_idx: None,
             text_filter: String::new(),
+            text_filter_folded: String::new(),
+            case_insensitive_text_filter: config.case_insensitive_text_filter,
             search_input: String::new(),
             input_mode: InputMode::Normal,
         }
     }
 
-    fn push_events(&mut self, events: Vec<LogEvent>, max_buffer_lines: usize) {
+    fn push_events(&mut self, events: Vec<LogEvent>, suppressed: usize, max_buffer_lines: usize) {
+        self.suppressed_by_rules += suppressed as u64;
         for event in events {
             self.total_events_seen += 1;
             self.events.push_back(event);
@@ -196,13 +206,17 @@ impl TuiState {
                 self.cycle_filter();
                 false
             }
+            KeyCode::Char('i') => {
+                self.case_insensitive_text_filter = !self.case_insensitive_text_filter;
+                false
+            }
             KeyCode::Char('/') => {
                 self.input_mode = InputMode::Search;
                 self.search_input = self.text_filter.clone();
                 false
             }
             KeyCode::Char('c') => {
-                self.text_filter.clear();
+                self.set_text_filter(String::new());
                 self.scroll_offset = 0;
                 false
             }
@@ -216,7 +230,7 @@ impl TuiState {
                 self.input_mode = InputMode::Normal;
             }
             KeyCode::Enter => {
-                self.text_filter = self.search_input.trim().to_string();
+                self.set_text_filter(self.search_input.trim().to_string());
                 self.search_input.clear();
                 self.input_mode = InputMode::Normal;
                 self.scroll_offset = 0;
@@ -249,16 +263,23 @@ impl TuiState {
         } else {
             format!("text={}", self.text_filter)
         };
+        let text_mode_label = if self.case_insensitive_text_filter {
+            "text-ci=on"
+        } else {
+            "text-ci=off"
+        };
         format!(
-            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  {}  {}  {}  keys:q p j/k g/G f / c",
+            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}  keys:q p j/k g/G f / c i",
             self.sources.len(),
             config.poll_interval_ms,
             self.events.len(),
             self.total_events_seen,
             self.dropped_events,
+            self.suppressed_by_rules,
             if self.paused { "paused" } else { "live" },
             source_filter_label,
-            text_filter_label
+            text_filter_label,
+            text_mode_label
         )
     }
 
@@ -300,7 +321,16 @@ impl TuiState {
                 .is_some_and(|source| source == &event.source),
             None => true,
         };
-        let text_match = self.text_filter.is_empty() || event.line.contains(&self.text_filter);
+        let text_match = if self.text_filter.is_empty() {
+            true
+        } else if self.case_insensitive_text_filter {
+            event
+                .line
+                .to_lowercase()
+                .contains(self.text_filter_folded.as_str())
+        } else {
+            event.line.contains(&self.text_filter)
+        };
         source_match && text_match
     }
 
@@ -311,6 +341,11 @@ impl TuiState {
             _ => None,
         };
         self.scroll_offset = 0;
+    }
+
+    fn set_text_filter(&mut self, filter: String) {
+        self.text_filter = filter;
+        self.text_filter_folded = self.text_filter.to_lowercase();
     }
 }
 
@@ -327,6 +362,9 @@ mod tests {
             max_buffer_lines: 100,
             max_line_len: 256,
             show_timestamps: true,
+            case_insensitive_text_filter: true,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
         }
     }
 
@@ -347,6 +385,7 @@ mod tests {
                     line: "ERROR failed to bind".to_string(),
                 },
             ],
+            0,
             config.max_buffer_lines,
         );
 
@@ -379,13 +418,51 @@ mod tests {
                     line: "beta".to_string(),
                 },
             ],
+            0,
             config.max_buffer_lines,
         );
-        state.text_filter = "alpha".to_string();
+        state.set_text_filter("alpha".to_string());
         assert_eq!(state.filtered_len(), 1);
 
         state.handle_key(KeyCode::Char('c'));
         assert!(state.text_filter.is_empty());
         assert_eq!(state.filtered_len(), 2);
+    }
+
+    #[test]
+    fn case_insensitive_filter_matches_different_case() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+        state.push_events(
+            vec![LogEvent {
+                ts: SystemTime::UNIX_EPOCH,
+                source: "a.log".to_string(),
+                line: "Error: failed to bind".to_string(),
+            }],
+            0,
+            config.max_buffer_lines,
+        );
+        state.set_text_filter("error".to_string());
+        assert_eq!(state.filtered_len(), 1);
+    }
+
+    #[test]
+    fn case_sensitive_filter_can_be_toggled() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+        state.push_events(
+            vec![LogEvent {
+                ts: SystemTime::UNIX_EPOCH,
+                source: "a.log".to_string(),
+                line: "Error: failed to bind".to_string(),
+            }],
+            0,
+            config.max_buffer_lines,
+        );
+        state.set_text_filter("error".to_string());
+        assert_eq!(state.filtered_len(), 1);
+
+        state.handle_key(KeyCode::Char('i'));
+        assert_eq!(state.filtered_len(), 0);
     }
 }

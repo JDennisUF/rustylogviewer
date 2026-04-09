@@ -19,3 +19,4 @@
 ## Post-v0 Enhancements
 
 - [x] Add interactive text filter in TUI (`/` to set, `c` to clear)
+- [x] Add case-insensitive text filtering and regex blacklist/whitelist rules

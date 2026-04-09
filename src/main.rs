@@ -3,6 +3,7 @@ use clap::Parser;
 use rustylogviewer::cli::CliArgs;
 use rustylogviewer::config::AppConfig;
 use rustylogviewer::formatting::format_event_line;
+use rustylogviewer::line_rules::LineRules;
 use rustylogviewer::ui;
 use rustylogviewer::watcher::PollingWatcher;
 use std::time::Duration;
@@ -28,8 +29,10 @@ fn run_headless(config: AppConfig) -> Result<()> {
     println!("Starting headless watcher. Press Ctrl-C to exit.");
 
     let mut watcher = PollingWatcher::new(config.tracked_files.clone(), config.max_line_len)?;
+    let rules = LineRules::new(&config.blacklist_regex, &config.whitelist_regex)?;
     loop {
         let events = watcher.poll()?;
+        let (events, _suppressed) = rules.partition_events(events);
         for event in events {
             println!("{}", format_event_line(&event, config.show_timestamps));
         }

@@ -40,6 +40,22 @@ pub struct CliArgs {
     #[arg(long, action = ArgAction::SetTrue)]
     pub headless: bool,
 
+    /// Match text filters case-insensitively (default behavior).
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "case_sensitive_filter")]
+    pub case_insensitive_filter: bool,
+
+    /// Match text filters case-sensitively.
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "case_insensitive_filter")]
+    pub case_sensitive_filter: bool,
+
+    /// Regex pattern to suppress matching lines. Can be passed multiple times.
+    #[arg(long = "blacklist-regex", value_name = "REGEX")]
+    pub blacklist_regex: Vec<String>,
+
+    /// Regex pattern to force-keep matching lines, even if blacklisted.
+    #[arg(long = "whitelist-regex", value_name = "REGEX")]
+    pub whitelist_regex: Vec<String>,
+
     /// Files to track. If present, overrides `tracked_files` from config.
     #[arg(value_name = "FILE")]
     pub files: Vec<PathBuf>,

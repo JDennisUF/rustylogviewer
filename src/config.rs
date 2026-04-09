@@ -1,5 +1,6 @@
 use crate::cli::CliArgs;
 use anyhow::{Context, Result, bail};
+use regex::Regex;
 use serde::Deserialize;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,9 @@ pub struct AppConfig {
     pub max_buffer_lines: usize,
     pub max_line_len: usize,
     pub show_timestamps: bool,
+    pub case_insensitive_text_filter: bool,
+    pub blacklist_regex: Vec<String>,
+    pub whitelist_regex: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -26,6 +30,9 @@ impl Default for AppConfig {
             max_buffer_lines: DEFAULT_MAX_BUFFER_LINES,
             max_line_len: DEFAULT_MAX_LINE_LEN,
             show_timestamps: true,
+            case_insensitive_text_filter: true,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
         }
     }
 }
@@ -48,6 +55,27 @@ impl AppConfig {
         let _ = writeln!(summary, "  max_buffer_lines: {}", self.max_buffer_lines);
         let _ = writeln!(summary, "  max_line_len: {}", self.max_line_len);
         let _ = writeln!(summary, "  show_timestamps: {}", self.show_timestamps);
+        let _ = writeln!(
+            summary,
+            "  case_insensitive_text_filter: {}",
+            self.case_insensitive_text_filter
+        );
+        let _ = writeln!(
+            summary,
+            "  blacklist_regex count: {}",
+            self.blacklist_regex.len()
+        );
+        for pattern in &self.blacklist_regex {
+            let _ = writeln!(summary, "    - {}", pattern);
+        }
+        let _ = writeln!(
+            summary,
+            "  whitelist_regex count: {}",
+            self.whitelist_regex.len()
+        );
+        for pattern in &self.whitelist_regex {
+            let _ = writeln!(summary, "    - {}", pattern);
+        }
         let _ = writeln!(summary, "  tracked_files ({}):", self.tracked_files.len());
         for path in &self.tracked_files {
             let _ = writeln!(summary, "    - {}", path.display());
@@ -73,6 +101,20 @@ impl AppConfig {
                 bail!(ConfigValidationError::EmptyPath);
             }
         }
+        for pattern in &self.blacklist_regex {
+            Regex::new(pattern).map_err(|err| ConfigValidationError::InvalidRegex {
+                kind: "blacklist",
+                pattern: pattern.clone(),
+                message: err.to_string(),
+            })?;
+        }
+        for pattern in &self.whitelist_regex {
+            Regex::new(pattern).map_err(|err| ConfigValidationError::InvalidRegex {
+                kind: "whitelist",
+                pattern: pattern.clone(),
+                message: err.to_string(),
+            })?;
+        }
         Ok(())
     }
 }
@@ -84,6 +126,9 @@ struct FileConfig {
     max_buffer_lines: Option<usize>,
     max_line_len: Option<usize>,
     show_timestamps: Option<bool>,
+    case_insensitive_text_filter: Option<bool>,
+    blacklist_regex: Option<Vec<String>>,
+    whitelist_regex: Option<Vec<String>>,
 }
 
 #[derive(Debug, Error)]
@@ -98,6 +143,12 @@ pub enum ConfigValidationError {
     NoTrackedFiles,
     #[error("tracked files contains an empty path")]
     EmptyPath,
+    #[error("{kind} regex `{pattern}` is invalid: {message}")]
+    InvalidRegex {
+        kind: &'static str,
+        pattern: String,
+        message: String,
+    },
 }
 
 fn load_config_file(path: &Path) -> Result<FileConfig> {
@@ -124,6 +175,15 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig
         if let Some(v) = file_cfg.show_timestamps {
             config.show_timestamps = v;
         }
+        if let Some(v) = file_cfg.case_insensitive_text_filter {
+            config.case_insensitive_text_filter = v;
+        }
+        if let Some(v) = file_cfg.blacklist_regex {
+            config.blacklist_regex = v;
+        }
+        if let Some(v) = file_cfg.whitelist_regex {
+            config.whitelist_regex = v;
+        }
         if let Some(v) = file_cfg.tracked_files {
             config.tracked_files = v;
         }
@@ -143,6 +203,18 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig
     }
     if cli.no_timestamps {
         config.show_timestamps = false;
+    }
+    if cli.case_insensitive_filter {
+        config.case_insensitive_text_filter = true;
+    }
+    if cli.case_sensitive_filter {
+        config.case_insensitive_text_filter = false;
+    }
+    if !cli.blacklist_regex.is_empty() {
+        config.blacklist_regex = cli.blacklist_regex.clone();
+    }
+    if !cli.whitelist_regex.is_empty() {
+        config.whitelist_regex = cli.whitelist_regex.clone();
     }
     if !cli.files.is_empty() {
         config.tracked_files = cli.files.clone();
@@ -170,6 +242,9 @@ poll_interval_ms = 2000
 max_buffer_lines = 7777
 max_line_len = 256
 show_timestamps = false
+case_insensitive_text_filter = false
+blacklist_regex = ["DEBUG.*"]
+whitelist_regex = ["DEBUG.*critical"]
 tracked_files = ["./a.log", "./b.log"]
 "#,
         );
@@ -182,6 +257,10 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
             files: Vec::new(),
         };
         let config = AppConfig::from_cli(&cli).expect("valid config");
@@ -190,6 +269,9 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_buffer_lines, 7777);
         assert_eq!(config.max_line_len, 256);
         assert!(!config.show_timestamps);
+        assert!(!config.case_insensitive_text_filter);
+        assert_eq!(config.blacklist_regex, vec!["DEBUG.*".to_string()]);
+        assert_eq!(config.whitelist_regex, vec!["DEBUG.*critical".to_string()]);
         assert_eq!(config.tracked_files.len(), 2);
     }
 
@@ -201,6 +283,9 @@ poll_interval_ms = 2000
 max_buffer_lines = 7777
 max_line_len = 256
 show_timestamps = false
+case_insensitive_text_filter = false
+blacklist_regex = ["x"]
+whitelist_regex = ["y"]
 tracked_files = ["./a.log", "./b.log"]
 "#,
         );
@@ -213,6 +298,10 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            case_insensitive_filter: true,
+            case_sensitive_filter: false,
+            blacklist_regex: vec!["ERROR".to_string()],
+            whitelist_regex: vec!["ERROR keep".to_string()],
             files: vec![PathBuf::from("/tmp/override.log")],
         };
         let config = AppConfig::from_cli(&cli).expect("valid config");
@@ -221,6 +310,9 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_buffer_lines, 100);
         assert_eq!(config.max_line_len, 80);
         assert!(config.show_timestamps);
+        assert!(config.case_insensitive_text_filter);
+        assert_eq!(config.blacklist_regex, vec!["ERROR".to_string()]);
+        assert_eq!(config.whitelist_regex, vec!["ERROR keep".to_string()]);
         assert_eq!(
             config.tracked_files,
             vec![PathBuf::from("/tmp/override.log")]
@@ -238,10 +330,36 @@ tracked_files = ["./a.log", "./b.log"]
             no_timestamps: false,
             print_config_only: false,
             headless: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
             files: Vec::new(),
         };
 
         let err = AppConfig::from_cli(&cli).expect_err("expected missing files validation error");
         assert!(err.to_string().contains("no tracked files configured"));
+    }
+
+    #[test]
+    fn rejects_invalid_regex() {
+        let cli = CliArgs {
+            config: None,
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: vec!["(".to_string()],
+            whitelist_regex: Vec::new(),
+            files: vec![PathBuf::from("/tmp/app.log")],
+        };
+
+        let err = AppConfig::from_cli(&cli).expect_err("invalid regex should fail");
+        assert!(err.to_string().contains("regex"));
     }
 }

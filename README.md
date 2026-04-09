@@ -43,6 +43,11 @@ cargo run -- --config ./rustylogviewer.toml
 
 CLI values override config file values.
 
+Regex rules:
+
+- `blacklist_regex`: hide matching lines.
+- `whitelist_regex`: force-show matching lines (takes precedence over blacklist).
+
 ## TUI Controls
 
 - `q`: quit
@@ -54,6 +59,13 @@ CLI values override config file values.
 - `f`: cycle source-file filter
 - `/`: enter text-filter input mode (`Enter` apply, `Esc` cancel)
 - `c`: clear active text filter
+- `i`: toggle case-insensitive text filter matching
+
+## Useful Options
+
+- `--case-insensitive-filter` and `--case-sensitive-filter`
+- `--blacklist-regex "<pattern>"` (repeatable)
+- `--whitelist-regex "<pattern>"` (repeatable)
 
 ## Config Example
 

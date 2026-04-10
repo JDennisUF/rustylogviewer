@@ -30,7 +30,9 @@ GUI with preloaded config:
 cargo run -- --gui --config ./rustylogviewer.toml
 ```
 
-When `--gui` is started without `--config`, the app auto-loads the most recent config from MRU (if available).
+When `--gui` is started without `--config`, startup selection is:
+1. most recent MRU config (if any)
+2. otherwise the first valid `rustylogviewer` `.toml` config discovered in the executable/current directory
 
 TUI mode (default):
 
@@ -72,9 +74,11 @@ Regex rules:
 - `g`: jump to oldest retained lines
 - `G`: jump to newest lines
 - `f`: cycle source-file filter
+- `l`: show tracked file list (`l`/`Esc`/`Enter` to close)
 - `/`: enter text-filter input mode (`Enter` apply, `Esc` cancel)
 - `c`: clear active text filter
 - `i`: toggle case-insensitive text filter matching
+- `?`: show command help (`?`/`Esc`/`Enter` to close)
 
 ## Useful Options
 
@@ -103,7 +107,9 @@ Current GUI supports:
 
 - `Open Config`, `New Config`, `Save`, and `Save As`
 - MRU recent-config list (persisted across app runs)
-- selectable `Light Mode` (persisted as `gui_light_mode` in config)
+- startup discovery of valid app `.toml` configs in executable/current directory (merged into the config chooser list)
+- selectable hardcoded GUI themes (including `Shades of Purple`, persisted as `gui_theme` in config)
+- configurable word-wrap toggle for long log lines (persisted as `gui_word_wrap`)
 - configurable GUI font size (persisted as `gui_font_size`)
 - form-based editing for:
   - general settings

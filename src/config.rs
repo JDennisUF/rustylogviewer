@@ -10,6 +10,78 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_MAX_BUFFER_LINES: usize = 10_000;
 const DEFAULT_MAX_LINE_LEN: usize = 512;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuiTheme {
+    DefaultDark,
+    Light,
+    HighContrast,
+    OceanBlue,
+    ShadesOfPurple,
+    Novare,
+    Dracula,
+    Nord,
+    SolarizedDark,
+    SolarizedLight,
+    OneDark,
+}
+
+impl GuiTheme {
+    pub const ALL: [GuiTheme; 11] = [
+        GuiTheme::DefaultDark,
+        GuiTheme::Light,
+        GuiTheme::HighContrast,
+        GuiTheme::OceanBlue,
+        GuiTheme::ShadesOfPurple,
+        GuiTheme::Novare,
+        GuiTheme::Dracula,
+        GuiTheme::Nord,
+        GuiTheme::SolarizedDark,
+        GuiTheme::SolarizedLight,
+        GuiTheme::OneDark,
+    ];
+
+    pub fn all() -> &'static [GuiTheme] {
+        &Self::ALL
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            GuiTheme::DefaultDark => "Default Dark",
+            GuiTheme::Light => "Light",
+            GuiTheme::HighContrast => "High Contrast",
+            GuiTheme::OceanBlue => "Ocean Blue",
+            GuiTheme::ShadesOfPurple => "Shades of Purple",
+            GuiTheme::Novare => "Novare",
+            GuiTheme::Dracula => "Dracula",
+            GuiTheme::Nord => "Nord",
+            GuiTheme::SolarizedDark => "Solarized Dark",
+            GuiTheme::SolarizedLight => "Solarized Light",
+            GuiTheme::OneDark => "One Dark",
+        }
+    }
+
+    pub fn config_key(self) -> &'static str {
+        match self {
+            GuiTheme::DefaultDark => "default_dark",
+            GuiTheme::Light => "light",
+            GuiTheme::HighContrast => "high_contrast",
+            GuiTheme::OceanBlue => "ocean_blue",
+            GuiTheme::ShadesOfPurple => "shades_of_purple",
+            GuiTheme::Novare => "novare",
+            GuiTheme::Dracula => "dracula",
+            GuiTheme::Nord => "nord",
+            GuiTheme::SolarizedDark => "solarized_dark",
+            GuiTheme::SolarizedLight => "solarized_light",
+            GuiTheme::OneDark => "one_dark",
+        }
+    }
+
+    pub fn is_light(self) -> bool {
+        matches!(self, GuiTheme::Light | GuiTheme::SolarizedLight)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AppConfig {
     pub poll_interval_ms: u64,
@@ -18,6 +90,8 @@ pub struct AppConfig {
     pub max_line_len: usize,
     pub show_timestamps: bool,
     pub gui_light_mode: bool,
+    pub gui_theme: GuiTheme,
+    pub gui_word_wrap: bool,
     pub gui_font_size: f32,
     pub case_insensitive_text_filter: bool,
     pub blacklist_regex: Vec<String>,
@@ -33,6 +107,8 @@ impl Default for AppConfig {
             max_line_len: DEFAULT_MAX_LINE_LEN,
             show_timestamps: true,
             gui_light_mode: false,
+            gui_theme: GuiTheme::DefaultDark,
+            gui_word_wrap: true,
             gui_font_size: 14.0,
             case_insensitive_text_filter: true,
             blacklist_regex: Vec::new(),
@@ -78,6 +154,8 @@ impl AppConfig {
         let _ = writeln!(summary, "  max_line_len: {}", self.max_line_len);
         let _ = writeln!(summary, "  show_timestamps: {}", self.show_timestamps);
         let _ = writeln!(summary, "  gui_light_mode: {}", self.gui_light_mode);
+        let _ = writeln!(summary, "  gui_theme: {}", self.gui_theme.config_key());
+        let _ = writeln!(summary, "  gui_word_wrap: {}", self.gui_word_wrap);
         let _ = writeln!(summary, "  gui_font_size: {}", self.gui_font_size);
         let _ = writeln!(
             summary,
@@ -154,6 +232,8 @@ struct FileConfig {
     max_line_len: Option<usize>,
     show_timestamps: Option<bool>,
     gui_light_mode: Option<bool>,
+    gui_theme: Option<GuiTheme>,
+    gui_word_wrap: Option<bool>,
     gui_font_size: Option<f32>,
     case_insensitive_text_filter: Option<bool>,
     blacklist_regex: Option<Vec<String>>,
@@ -208,6 +288,18 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig
         }
         if let Some(v) = file_cfg.gui_light_mode {
             config.gui_light_mode = v;
+            config.gui_theme = if v {
+                GuiTheme::Light
+            } else {
+                GuiTheme::DefaultDark
+            };
+        }
+        if let Some(v) = file_cfg.gui_theme {
+            config.gui_theme = v;
+            config.gui_light_mode = v.is_light();
+        }
+        if let Some(v) = file_cfg.gui_word_wrap {
+            config.gui_word_wrap = v;
         }
         if let Some(v) = file_cfg.gui_font_size {
             config.gui_font_size = v;
@@ -281,6 +373,7 @@ max_line_len = 256
 show_timestamps = false
 gui_light_mode = true
 gui_font_size = 16.0
+gui_word_wrap = false
 case_insensitive_text_filter = false
 blacklist_regex = ["DEBUG.*"]
 whitelist_regex = ["DEBUG.*critical"]
@@ -310,6 +403,8 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_line_len, 256);
         assert!(!config.show_timestamps);
         assert!(config.gui_light_mode);
+        assert_eq!(config.gui_theme, GuiTheme::Light);
+        assert!(!config.gui_word_wrap);
         assert_eq!(config.gui_font_size, 16.0);
         assert!(!config.case_insensitive_text_filter);
         assert_eq!(config.blacklist_regex, vec!["DEBUG.*".to_string()]);
@@ -356,6 +451,8 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.max_line_len, 80);
         assert!(config.show_timestamps);
         assert!(config.gui_light_mode);
+        assert_eq!(config.gui_theme, GuiTheme::Light);
+        assert!(config.gui_word_wrap);
         assert_eq!(config.gui_font_size, 15.0);
         assert!(config.case_insensitive_text_filter);
         assert_eq!(config.blacklist_regex, vec!["ERROR".to_string()]);
@@ -444,5 +541,146 @@ tracked_files = ["/tmp/app.log"]
 
         let err = AppConfig::from_cli(&cli).expect_err("invalid gui font size should fail");
         assert!(err.to_string().contains("gui_font_size"));
+    }
+
+    #[test]
+    fn gui_theme_overrides_legacy_gui_light_mode() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+gui_light_mode = true
+gui_theme = "shades_of_purple"
+gui_font_size = 14.0
+tracked_files = ["/tmp/app.log"]
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let config = AppConfig::from_cli(&cli).expect("valid config");
+        assert_eq!(config.gui_theme, GuiTheme::ShadesOfPurple);
+        assert!(!config.gui_light_mode);
+    }
+
+    #[test]
+    fn parses_additional_popular_themes() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+gui_theme = "dracula"
+gui_font_size = 14.0
+tracked_files = ["/tmp/app.log"]
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let config = AppConfig::from_cli(&cli).expect("valid config");
+        assert_eq!(config.gui_theme, GuiTheme::Dracula);
+        assert!(!config.gui_light_mode);
+    }
+
+    #[test]
+    fn novare_theme_parses_and_is_dark_mode_compat() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+gui_theme = "novare"
+gui_font_size = 14.0
+tracked_files = ["/tmp/app.log"]
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let config = AppConfig::from_cli(&cli).expect("valid config");
+        assert_eq!(config.gui_theme, GuiTheme::Novare);
+        assert!(!config.gui_light_mode);
+    }
+
+    #[test]
+    fn solarized_light_sets_light_mode_compat_flag() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+gui_theme = "solarized_light"
+gui_font_size = 14.0
+tracked_files = ["/tmp/app.log"]
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let config = AppConfig::from_cli(&cli).expect("valid config");
+        assert_eq!(config.gui_theme, GuiTheme::SolarizedLight);
+        assert!(config.gui_light_mode);
     }
 }

@@ -89,18 +89,31 @@ fn render(frame: &mut Frame<'_>, state: &TuiState, config: &AppConfig) {
         .block(Block::default());
     frame.render_widget(header, areas[0]);
 
-    let lines = state.visible_lines(config.show_timestamps, areas[1].height as usize);
-    let content = if lines.is_empty() {
-        let empty_text = if state.events.is_empty() {
-            "Waiting for new log lines..."
+    let content = if state.input_mode == InputMode::ListTrackedFiles {
+        let lines = state.tracked_file_lines();
+        if lines.is_empty() {
+            Paragraph::new("No tracked files configured.")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(Block::default())
         } else {
-            "No lines match active filters."
-        };
-        Paragraph::new(empty_text)
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default())
+            Paragraph::new(lines).block(Block::default())
+        }
+    } else if state.input_mode == InputMode::Help {
+        Paragraph::new(state.command_help_lines()).block(Block::default())
     } else {
-        Paragraph::new(lines).block(Block::default())
+        let lines = state.visible_lines(config.show_timestamps, areas[1].height as usize);
+        if lines.is_empty() {
+            let empty_text = if state.events.is_empty() {
+                "Waiting for new log lines..."
+            } else {
+                "No lines match active filters."
+            };
+            Paragraph::new(empty_text)
+                .style(Style::default().fg(Color::DarkGray))
+                .block(Block::default())
+        } else {
+            Paragraph::new(lines).block(Block::default())
+        }
     };
     frame.render_widget(content, areas[1]);
 }
@@ -114,6 +127,7 @@ struct TuiState {
     paused: bool,
     scroll_offset: usize,
     sources: Vec<String>,
+    tracked_files: Vec<String>,
     active_source_filter_idx: Option<usize>,
     text_filter: String,
     text_filter_folded: String,
@@ -126,6 +140,8 @@ struct TuiState {
 enum InputMode {
     Normal,
     Search,
+    ListTrackedFiles,
+    Help,
 }
 
 impl TuiState {
@@ -139,6 +155,11 @@ impl TuiState {
                     .unwrap_or_else(|| path.display().to_string())
             })
             .collect();
+        let tracked_files = config
+            .tracked_files
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
 
         Self {
             events: VecDeque::with_capacity(config.max_buffer_lines),
@@ -148,6 +169,7 @@ impl TuiState {
             paused: false,
             scroll_offset: 0,
             sources,
+            tracked_files,
             active_source_filter_idx: None,
             text_filter: String::new(),
             text_filter_folded: String::new(),
@@ -177,6 +199,12 @@ impl TuiState {
     fn handle_key(&mut self, key: KeyCode) -> bool {
         if self.input_mode == InputMode::Search {
             return self.handle_search_key(key);
+        }
+        if self.input_mode == InputMode::ListTrackedFiles {
+            return self.handle_tracked_files_key(key);
+        }
+        if self.input_mode == InputMode::Help {
+            return self.handle_help_key(key);
         }
 
         match key {
@@ -220,6 +248,14 @@ impl TuiState {
                 self.scroll_offset = 0;
                 false
             }
+            KeyCode::Char('l') => {
+                self.input_mode = InputMode::ListTrackedFiles;
+                false
+            }
+            KeyCode::Char('?') => {
+                self.input_mode = InputMode::Help;
+                false
+            }
             _ => false,
         }
     }
@@ -246,12 +282,44 @@ impl TuiState {
         false
     }
 
+    fn handle_tracked_files_key(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Char('q') => true,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('l') => {
+                self.input_mode = InputMode::Normal;
+                false
+            }
+            KeyCode::Char('?') => {
+                self.input_mode = InputMode::Help;
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_help_key(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Char('q') => true,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
+                self.input_mode = InputMode::Normal;
+                false
+            }
+            _ => false,
+        }
+    }
+
     fn header_line(&self, config: &AppConfig) -> String {
         if self.input_mode == InputMode::Search {
             return format!(
                 "search:/{}  Enter apply  Esc cancel  Backspace delete",
                 self.search_input
             );
+        }
+        if self.input_mode == InputMode::ListTrackedFiles {
+            return "tracked files  keys:l/Esc/Enter close  q quit".to_string();
+        }
+        if self.input_mode == InputMode::Help {
+            return "help  keys:?/Esc/Enter close  q quit".to_string();
         }
 
         let source_filter_label = match self.active_source_filter_idx {
@@ -269,7 +337,7 @@ impl TuiState {
             "text-ci=off"
         };
         format!(
-            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}  keys:q p j/k g/G f / c i",
+            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}  keys:q p j/k g/G f l / c i ?",
             self.sources.len(),
             config.poll_interval_ms,
             self.events.len(),
@@ -281,6 +349,34 @@ impl TuiState {
             text_filter_label,
             text_mode_label
         )
+    }
+
+    fn tracked_file_lines(&self) -> Vec<Line<'static>> {
+        self.tracked_files
+            .iter()
+            .enumerate()
+            .map(|(idx, path)| Line::from(format!("{:>2}. {}", idx + 1, path)))
+            .collect()
+    }
+
+    fn command_help_lines(&self) -> Vec<Line<'static>> {
+        vec![
+            Line::from("CLI Command Help (single-letter keys)"),
+            Line::from(""),
+            Line::from("q  Quit"),
+            Line::from("p  Pause/resume polling"),
+            Line::from("j  Scroll toward newest lines"),
+            Line::from("k  Scroll toward older lines"),
+            Line::from("g  Jump to oldest retained lines"),
+            Line::from("G  Jump to newest lines"),
+            Line::from("f  Cycle source-file filter"),
+            Line::from("l  Show tracked file list"),
+            Line::from("c  Clear text filter"),
+            Line::from("i  Toggle case-insensitive text filter"),
+            Line::from("?  Toggle this help panel"),
+            Line::from(""),
+            Line::from("Close help: ? / Esc / Enter"),
+        ]
     }
 
     fn visible_lines(&self, show_timestamps: bool, height: usize) -> Vec<Line<'static>> {
@@ -352,6 +448,7 @@ impl TuiState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::GuiTheme;
     use std::path::PathBuf;
     use std::time::SystemTime;
 
@@ -363,6 +460,8 @@ mod tests {
             max_line_len: 256,
             show_timestamps: true,
             gui_light_mode: false,
+            gui_theme: GuiTheme::DefaultDark,
+            gui_word_wrap: true,
             gui_font_size: 14.0,
             case_insensitive_text_filter: true,
             blacklist_regex: Vec::new(),
@@ -466,5 +565,29 @@ mod tests {
 
         state.handle_key(KeyCode::Char('i'));
         assert_eq!(state.filtered_len(), 0);
+    }
+
+    #[test]
+    fn l_opens_and_closes_tracked_files_view() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+
+        assert_eq!(state.input_mode, InputMode::Normal);
+        state.handle_key(KeyCode::Char('l'));
+        assert_eq!(state.input_mode, InputMode::ListTrackedFiles);
+        state.handle_key(KeyCode::Esc);
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn question_mark_toggles_help_view() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+
+        assert_eq!(state.input_mode, InputMode::Normal);
+        state.handle_key(KeyCode::Char('?'));
+        assert_eq!(state.input_mode, InputMode::Help);
+        state.handle_key(KeyCode::Char('?'));
+        assert_eq!(state.input_mode, InputMode::Normal);
     }
 }

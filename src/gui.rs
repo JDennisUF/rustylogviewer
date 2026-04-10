@@ -1,4 +1,4 @@
-use crate::config::AppConfig;
+use crate::config::{AppConfig, GuiTheme};
 use crate::formatting::format_event_line;
 use crate::line_rules::LineRules;
 use crate::watcher::{LogEvent, PollingWatcher};
@@ -84,7 +84,7 @@ struct GuiApp {
     text_filter: String,
     source_filter: Option<String>,
     config_panel_visible: bool,
-    last_applied_light_mode: Option<bool>,
+    last_applied_theme: Option<GuiTheme>,
     last_applied_font_size: Option<f32>,
 }
 
@@ -142,7 +142,7 @@ impl GuiApp {
             text_filter: String::new(),
             source_filter: None,
             config_panel_visible: true,
-            last_applied_light_mode: None,
+            last_applied_theme: None,
             last_applied_font_size: None,
         };
 
@@ -284,17 +284,17 @@ impl GuiApp {
             }
         };
 
-        self.events.clear();
-        self.total_seen = 0;
-        self.dropped = 0;
-        self.suppressed_by_rules = 0;
+        while self.events.len() > self.config.max_buffer_lines {
+            self.events.pop_front();
+            self.dropped += 1;
+        }
         self.last_poll_at = Instant::now();
         self.watcher = Some(watcher);
         self.rules = Some(rules);
         self.active_blacklist_regex = self.config.blacklist_regex.clone();
         self.active_whitelist_regex = self.config.whitelist_regex.clone();
         self.running = true;
-        self.status_message = "Stream started".to_string();
+        self.status_message = "Stream started (existing lines preserved)".to_string();
     }
 
     fn stop_stream(&mut self) {
@@ -385,7 +385,7 @@ impl GuiApp {
 
     fn maybe_apply_visual_theme(&mut self, ctx: &egui::Context) {
         let base = self.config.gui_font_size.clamp(8.0, 40.0);
-        let should_apply = self.last_applied_light_mode != Some(self.config.gui_light_mode)
+        let should_apply = self.last_applied_theme != Some(self.config.gui_theme)
             || self
                 .last_applied_font_size
                 .is_none_or(|prev| (prev - base).abs() > f32::EPSILON);
@@ -393,11 +393,7 @@ impl GuiApp {
             return;
         }
 
-        if self.config.gui_light_mode {
-            ctx.set_visuals(egui::Visuals::light());
-        } else {
-            ctx.set_visuals(egui::Visuals::dark());
-        }
+        ctx.set_visuals(visuals_for_theme(self.config.gui_theme));
 
         let mut style = (*ctx.style()).clone();
         style.text_styles.insert(
@@ -417,7 +413,7 @@ impl GuiApp {
             .text_styles
             .insert(TextStyle::Heading, FontId::proportional(base + 4.0));
         ctx.set_style(style);
-        self.last_applied_light_mode = Some(self.config.gui_light_mode);
+        self.last_applied_theme = Some(self.config.gui_theme);
         self.last_applied_font_size = Some(base);
     }
 
@@ -579,6 +575,200 @@ fn discover_app_configs_in_roots(search_roots: &[PathBuf]) -> Vec<PathBuf> {
 
 fn select_startup_config(initial: Option<PathBuf>, recent: &[PathBuf]) -> Option<PathBuf> {
     initial.or_else(|| recent.first().cloned())
+}
+
+fn visuals_for_theme(theme: GuiTheme) -> egui::Visuals {
+    match theme {
+        GuiTheme::DefaultDark => egui::Visuals::dark(),
+        GuiTheme::Light => egui::Visuals::light(),
+        GuiTheme::HighContrast => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(255, 255, 255));
+            visuals.hyperlink_color = Color32::from_rgb(120, 210, 255);
+            visuals.selection.bg_fill = Color32::from_rgb(255, 214, 0);
+            visuals.selection.stroke.color = Color32::from_rgb(0, 0, 0);
+            visuals.panel_fill = Color32::from_rgb(0, 0, 0);
+            visuals.window_fill = Color32::from_rgb(8, 8, 8);
+            visuals.faint_bg_color = Color32::from_rgb(18, 18, 18);
+            visuals.extreme_bg_color = Color32::from_rgb(0, 0, 0);
+            visuals.code_bg_color = Color32::from_rgb(14, 14, 14);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(24, 24, 24);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(46, 46, 46);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(255, 214, 0);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(255, 214, 0);
+            visuals.widgets.active.fg_stroke.color = Color32::from_rgb(0, 0, 0);
+            visuals.widgets.open.fg_stroke.color = Color32::from_rgb(0, 0, 0);
+            visuals
+        }
+        GuiTheme::OceanBlue => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(220, 235, 250));
+            visuals.hyperlink_color = Color32::from_rgb(102, 194, 255);
+            visuals.selection.bg_fill = Color32::from_rgb(46, 95, 138);
+            visuals.selection.stroke.color = Color32::from_rgb(225, 243, 255);
+            visuals.panel_fill = Color32::from_rgb(18, 26, 36);
+            visuals.window_fill = Color32::from_rgb(20, 31, 43);
+            visuals.faint_bg_color = Color32::from_rgb(23, 36, 50);
+            visuals.extreme_bg_color = Color32::from_rgb(13, 20, 30);
+            visuals.code_bg_color = Color32::from_rgb(17, 29, 43);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(29, 52, 74);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(36, 66, 92);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(45, 80, 112);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(45, 80, 112);
+            visuals
+        }
+        GuiTheme::ShadesOfPurple => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(236, 225, 255));
+            visuals.hyperlink_color = Color32::from_rgb(203, 166, 255);
+            visuals.selection.bg_fill = Color32::from_rgb(96, 63, 145);
+            visuals.selection.stroke.color = Color32::from_rgb(242, 230, 255);
+            visuals.panel_fill = Color32::from_rgb(31, 20, 51);
+            visuals.window_fill = Color32::from_rgb(38, 24, 63);
+            visuals.faint_bg_color = Color32::from_rgb(45, 30, 72);
+            visuals.extreme_bg_color = Color32::from_rgb(24, 16, 40);
+            visuals.code_bg_color = Color32::from_rgb(42, 27, 69);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(68, 45, 106);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(87, 58, 133);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(102, 68, 154);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(102, 68, 154);
+            visuals
+        }
+        GuiTheme::Novare => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(226, 232, 247));
+            visuals.hyperlink_color = Color32::from_rgb(109, 219, 212);
+            visuals.selection.bg_fill = Color32::from_rgb(116, 99, 184);
+            visuals.selection.stroke.color = Color32::from_rgb(236, 241, 255);
+            visuals.panel_fill = Color32::from_rgb(14, 24, 38);
+            visuals.window_fill = Color32::from_rgb(18, 31, 49);
+            visuals.faint_bg_color = Color32::from_rgb(25, 40, 61);
+            visuals.extreme_bg_color = Color32::from_rgb(10, 17, 29);
+            visuals.code_bg_color = Color32::from_rgb(16, 28, 45);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(44, 63, 90);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(57, 81, 113);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(83, 128, 166);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(83, 128, 166);
+            visuals
+        }
+        GuiTheme::Dracula => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(248, 248, 242));
+            visuals.hyperlink_color = Color32::from_rgb(139, 233, 253);
+            visuals.selection.bg_fill = Color32::from_rgb(98, 114, 164);
+            visuals.selection.stroke.color = Color32::from_rgb(248, 248, 242);
+            visuals.panel_fill = Color32::from_rgb(40, 42, 54);
+            visuals.window_fill = Color32::from_rgb(43, 46, 64);
+            visuals.faint_bg_color = Color32::from_rgb(52, 55, 76);
+            visuals.extreme_bg_color = Color32::from_rgb(31, 33, 43);
+            visuals.code_bg_color = Color32::from_rgb(49, 52, 70);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(68, 71, 90);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(80, 84, 106);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(98, 114, 164);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(98, 114, 164);
+            visuals
+        }
+        GuiTheme::Nord => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(216, 222, 233));
+            visuals.hyperlink_color = Color32::from_rgb(136, 192, 208);
+            visuals.selection.bg_fill = Color32::from_rgb(94, 129, 172);
+            visuals.selection.stroke.color = Color32::from_rgb(236, 239, 244);
+            visuals.panel_fill = Color32::from_rgb(46, 52, 64);
+            visuals.window_fill = Color32::from_rgb(52, 60, 74);
+            visuals.faint_bg_color = Color32::from_rgb(59, 66, 82);
+            visuals.extreme_bg_color = Color32::from_rgb(42, 48, 60);
+            visuals.code_bg_color = Color32::from_rgb(52, 58, 72);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(67, 76, 94);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(79, 90, 110);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(94, 129, 172);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(94, 129, 172);
+            visuals
+        }
+        GuiTheme::SolarizedDark => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(131, 148, 150));
+            visuals.hyperlink_color = Color32::from_rgb(38, 139, 210);
+            visuals.selection.bg_fill = Color32::from_rgb(7, 54, 66);
+            visuals.selection.stroke.color = Color32::from_rgb(238, 232, 213);
+            visuals.panel_fill = Color32::from_rgb(0, 43, 54);
+            visuals.window_fill = Color32::from_rgb(3, 50, 62);
+            visuals.faint_bg_color = Color32::from_rgb(7, 54, 66);
+            visuals.extreme_bg_color = Color32::from_rgb(0, 34, 44);
+            visuals.code_bg_color = Color32::from_rgb(0, 49, 61);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 73, 83);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(32, 87, 99);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(38, 139, 210);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(38, 139, 210);
+            visuals
+        }
+        GuiTheme::SolarizedLight => {
+            let mut visuals = egui::Visuals::light();
+            visuals.override_text_color = Some(Color32::from_rgb(88, 110, 117));
+            visuals.hyperlink_color = Color32::from_rgb(38, 139, 210);
+            visuals.selection.bg_fill = Color32::from_rgb(238, 232, 213);
+            visuals.selection.stroke.color = Color32::from_rgb(88, 110, 117);
+            visuals.panel_fill = Color32::from_rgb(253, 246, 227);
+            visuals.window_fill = Color32::from_rgb(250, 243, 224);
+            visuals.faint_bg_color = Color32::from_rgb(247, 240, 220);
+            visuals.extreme_bg_color = Color32::from_rgb(238, 232, 213);
+            visuals.code_bg_color = Color32::from_rgb(238, 232, 213);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(242, 236, 217);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(232, 226, 207);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(181, 137, 0);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(181, 137, 0);
+            visuals
+        }
+        GuiTheme::OneDark => {
+            let mut visuals = egui::Visuals::dark();
+            visuals.override_text_color = Some(Color32::from_rgb(171, 178, 191));
+            visuals.hyperlink_color = Color32::from_rgb(97, 175, 239);
+            visuals.selection.bg_fill = Color32::from_rgb(62, 68, 82);
+            visuals.selection.stroke.color = Color32::from_rgb(220, 223, 228);
+            visuals.panel_fill = Color32::from_rgb(40, 44, 52);
+            visuals.window_fill = Color32::from_rgb(44, 49, 58);
+            visuals.faint_bg_color = Color32::from_rgb(46, 52, 62);
+            visuals.extreme_bg_color = Color32::from_rgb(34, 37, 44);
+            visuals.code_bg_color = Color32::from_rgb(39, 43, 51);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(62, 68, 82);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(73, 80, 96);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(82, 90, 108);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(82, 90, 108);
+            visuals
+        }
+    }
+}
+
+fn start_button_color(theme: GuiTheme) -> Color32 {
+    match theme {
+        GuiTheme::DefaultDark => Color32::from_rgb(38, 174, 96),
+        GuiTheme::Light => Color32::from_rgb(46, 160, 67),
+        GuiTheme::HighContrast => Color32::from_rgb(255, 214, 0),
+        GuiTheme::OceanBlue => Color32::from_rgb(38, 132, 190),
+        GuiTheme::ShadesOfPurple => Color32::from_rgb(126, 87, 194),
+        GuiTheme::Novare => Color32::from_rgb(88, 214, 184),
+        GuiTheme::Dracula => Color32::from_rgb(80, 220, 141),
+        GuiTheme::Nord => Color32::from_rgb(136, 192, 208),
+        GuiTheme::SolarizedDark => Color32::from_rgb(42, 161, 152),
+        GuiTheme::SolarizedLight => Color32::from_rgb(133, 153, 0),
+        GuiTheme::OneDark => Color32::from_rgb(152, 195, 121),
+    }
+}
+
+fn stop_button_color(theme: GuiTheme) -> Color32 {
+    match theme {
+        GuiTheme::DefaultDark => Color32::from_rgb(190, 45, 45),
+        GuiTheme::Light => Color32::from_rgb(200, 55, 55),
+        GuiTheme::HighContrast => Color32::from_rgb(255, 106, 106),
+        GuiTheme::OceanBlue => Color32::from_rgb(181, 77, 77),
+        GuiTheme::ShadesOfPurple => Color32::from_rgb(168, 86, 124),
+        GuiTheme::Novare => Color32::from_rgb(167, 146, 214),
+        GuiTheme::Dracula => Color32::from_rgb(255, 85, 85),
+        GuiTheme::Nord => Color32::from_rgb(191, 97, 106),
+        GuiTheme::SolarizedDark => Color32::from_rgb(220, 50, 47),
+        GuiTheme::SolarizedLight => Color32::from_rgb(203, 75, 22),
+        GuiTheme::OneDark => Color32::from_rgb(224, 108, 117),
+    }
 }
 
 fn render_startup_help(ui: &mut egui::Ui) {
@@ -791,26 +981,16 @@ impl eframe::App for GuiApp {
                     self.config_panel_visible = !self.config_panel_visible;
                 }
                 ui.separator();
-                let start_button = egui::Button::new(
-                    RichText::new("Start").strong().color(Color32::WHITE),
-                )
-                .fill(if self.config.gui_light_mode {
-                    Color32::from_rgb(46, 160, 67)
-                } else {
-                    Color32::from_rgb(38, 174, 96)
-                });
+                let start_button =
+                    egui::Button::new(RichText::new("Start").strong().color(Color32::WHITE))
+                        .fill(start_button_color(self.config.gui_theme));
                 if ui.add_enabled(!self.running, start_button).clicked() {
                     self.start_stream();
                 }
 
                 let stop_button = if self.running {
-                    egui::Button::new(RichText::new("Stop").strong().color(Color32::WHITE)).fill(
-                        if self.config.gui_light_mode {
-                            Color32::from_rgb(200, 55, 55)
-                        } else {
-                            Color32::from_rgb(190, 45, 45)
-                        },
-                    )
+                    egui::Button::new(RichText::new("Stop").strong().color(Color32::WHITE))
+                        .fill(stop_button_color(self.config.gui_theme))
                 } else {
                     egui::Button::new("Stop")
                 };
@@ -903,7 +1083,6 @@ impl eframe::App for GuiApp {
                         );
                     });
                     ui.checkbox(&mut self.config.show_timestamps, "Show timestamps");
-                    ui.checkbox(&mut self.config.gui_light_mode, "Light mode");
                     ui.horizontal(|ui| {
                         ui.label("GUI font size");
                         ui.add(
@@ -916,6 +1095,7 @@ impl eframe::App for GuiApp {
                         &mut self.config.case_insensitive_text_filter,
                         "Case-insensitive text filter",
                     );
+                    ui.checkbox(&mut self.config.gui_word_wrap, "Word Wrap");
 
                     ui.separator();
                     ui.label(RichText::new("Tracked Files").strong());
@@ -983,6 +1163,26 @@ impl eframe::App for GuiApp {
                     if ui.button("Add Whitelist Pattern").clicked() {
                         self.config.whitelist_regex.push(String::new());
                     }
+
+                    ui.separator();
+                    ui.label(RichText::new("Theme").strong());
+                    let previous_theme = self.config.gui_theme;
+                    egui::ComboBox::from_id_salt("gui-theme-selector")
+                        .selected_text(self.config.gui_theme.display_name())
+                        .show_ui(ui, |ui| {
+                            for theme in GuiTheme::all() {
+                                ui.selectable_value(
+                                    &mut self.config.gui_theme,
+                                    *theme,
+                                    theme.display_name(),
+                                );
+                            }
+                        });
+                    if self.config.gui_theme != previous_theme {
+                        self.status_message =
+                            format!("Theme: {}", self.config.gui_theme.display_name());
+                    }
+                    self.config.gui_light_mode = self.config.gui_theme.is_light();
                 });
 
             if let Some(path) = open_recent_from_panel {
@@ -1049,7 +1249,12 @@ impl eframe::App for GuiApp {
                 render_startup_help(ui);
                 ui.separator();
             }
-            egui::ScrollArea::vertical()
+            let log_scroll_area = if self.config.gui_word_wrap {
+                egui::ScrollArea::vertical()
+            } else {
+                egui::ScrollArea::both()
+            };
+            log_scroll_area
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
@@ -1069,7 +1274,14 @@ impl eframe::App for GuiApp {
                         } else {
                             &event.without_ts
                         };
-                        ui.label(RichText::new(line).monospace());
+                        if self.config.gui_word_wrap {
+                            ui.label(RichText::new(line).monospace());
+                        } else {
+                            ui.add(
+                                egui::Label::new(RichText::new(line).monospace())
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            );
+                        }
                     }
                 });
         });

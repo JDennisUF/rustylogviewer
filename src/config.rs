@@ -19,6 +19,7 @@ pub enum GuiTheme {
     OceanBlue,
     ShadesOfPurple,
     Novare,
+    NovareLight,
     Dracula,
     Nord,
     SolarizedDark,
@@ -27,13 +28,14 @@ pub enum GuiTheme {
 }
 
 impl GuiTheme {
-    pub const ALL: [GuiTheme; 11] = [
+    pub const ALL: [GuiTheme; 12] = [
         GuiTheme::DefaultDark,
         GuiTheme::Light,
         GuiTheme::HighContrast,
         GuiTheme::OceanBlue,
         GuiTheme::ShadesOfPurple,
         GuiTheme::Novare,
+        GuiTheme::NovareLight,
         GuiTheme::Dracula,
         GuiTheme::Nord,
         GuiTheme::SolarizedDark,
@@ -52,7 +54,8 @@ impl GuiTheme {
             GuiTheme::HighContrast => "High Contrast",
             GuiTheme::OceanBlue => "Ocean Blue",
             GuiTheme::ShadesOfPurple => "Shades of Purple",
-            GuiTheme::Novare => "Novare",
+            GuiTheme::Novare => "Novare Dark",
+            GuiTheme::NovareLight => "Novare Light",
             GuiTheme::Dracula => "Dracula",
             GuiTheme::Nord => "Nord",
             GuiTheme::SolarizedDark => "Solarized Dark",
@@ -69,6 +72,7 @@ impl GuiTheme {
             GuiTheme::OceanBlue => "ocean_blue",
             GuiTheme::ShadesOfPurple => "shades_of_purple",
             GuiTheme::Novare => "novare",
+            GuiTheme::NovareLight => "novare_light",
             GuiTheme::Dracula => "dracula",
             GuiTheme::Nord => "nord",
             GuiTheme::SolarizedDark => "solarized_dark",
@@ -78,7 +82,10 @@ impl GuiTheme {
     }
 
     pub fn is_light(self) -> bool {
-        matches!(self, GuiTheme::Light | GuiTheme::SolarizedLight)
+        matches!(
+            self,
+            GuiTheme::Light | GuiTheme::SolarizedLight | GuiTheme::NovareLight
+        )
     }
 }
 
@@ -647,6 +654,41 @@ tracked_files = ["/tmp/app.log"]
         let config = AppConfig::from_cli(&cli).expect("valid config");
         assert_eq!(config.gui_theme, GuiTheme::Novare);
         assert!(!config.gui_light_mode);
+    }
+
+    #[test]
+    fn novare_light_theme_sets_light_mode_compat_flag() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+gui_theme = "novare_light"
+gui_font_size = 14.0
+tracked_files = ["/tmp/app.log"]
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let config = AppConfig::from_cli(&cli).expect("valid config");
+        assert_eq!(config.gui_theme, GuiTheme::NovareLight);
+        assert!(config.gui_light_mode);
     }
 
     #[test]

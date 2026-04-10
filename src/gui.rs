@@ -651,6 +651,23 @@ fn visuals_for_theme(theme: GuiTheme) -> egui::Visuals {
             visuals.widgets.open.weak_bg_fill = Color32::from_rgb(83, 128, 166);
             visuals
         }
+        GuiTheme::NovareLight => {
+            let mut visuals = egui::Visuals::light();
+            visuals.override_text_color = Some(Color32::from_rgb(32, 73, 84));
+            visuals.hyperlink_color = Color32::from_rgb(41, 169, 143);
+            visuals.selection.bg_fill = Color32::from_rgb(120, 206, 186);
+            visuals.selection.stroke.color = Color32::from_rgb(17, 50, 57);
+            visuals.panel_fill = Color32::from_rgb(244, 253, 250);
+            visuals.window_fill = Color32::from_rgb(250, 255, 253);
+            visuals.faint_bg_color = Color32::from_rgb(231, 247, 241);
+            visuals.extreme_bg_color = Color32::from_rgb(221, 240, 233);
+            visuals.code_bg_color = Color32::from_rgb(233, 247, 241);
+            visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(214, 237, 230);
+            visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(196, 229, 219);
+            visuals.widgets.active.weak_bg_fill = Color32::from_rgb(84, 199, 171);
+            visuals.widgets.open.weak_bg_fill = Color32::from_rgb(84, 199, 171);
+            visuals
+        }
         GuiTheme::Dracula => {
             let mut visuals = egui::Visuals::dark();
             visuals.override_text_color = Some(Color32::from_rgb(248, 248, 242));
@@ -747,6 +764,7 @@ fn start_button_color(theme: GuiTheme) -> Color32 {
         GuiTheme::OceanBlue => Color32::from_rgb(38, 132, 190),
         GuiTheme::ShadesOfPurple => Color32::from_rgb(126, 87, 194),
         GuiTheme::Novare => Color32::from_rgb(88, 214, 184),
+        GuiTheme::NovareLight => Color32::from_rgb(72, 196, 165),
         GuiTheme::Dracula => Color32::from_rgb(80, 220, 141),
         GuiTheme::Nord => Color32::from_rgb(136, 192, 208),
         GuiTheme::SolarizedDark => Color32::from_rgb(42, 161, 152),
@@ -763,6 +781,7 @@ fn stop_button_color(theme: GuiTheme) -> Color32 {
         GuiTheme::OceanBlue => Color32::from_rgb(181, 77, 77),
         GuiTheme::ShadesOfPurple => Color32::from_rgb(168, 86, 124),
         GuiTheme::Novare => Color32::from_rgb(167, 146, 214),
+        GuiTheme::NovareLight => Color32::from_rgb(55, 150, 129),
         GuiTheme::Dracula => Color32::from_rgb(255, 85, 85),
         GuiTheme::Nord => Color32::from_rgb(191, 97, 106),
         GuiTheme::SolarizedDark => Color32::from_rgb(220, 50, 47),

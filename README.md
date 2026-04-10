@@ -21,16 +21,28 @@ cargo build
 GUI mode (desktop, Windows/Linux target):
 
 ```bash
-cargo run -- --gui
+cargo run
+```
+
+Windows shortcut target with no console window:
+
+```powershell
+.\target\release\rustylogviewer.exe
 ```
 
 GUI with preloaded config:
 
 ```bash
-cargo run -- --gui --config ./rustylogviewer.toml
+cargo run -- --config ./rustylogviewer.toml
 ```
 
-When `--gui` is started without `--config`, startup selection is:
+Windows shortcut target with preloaded config and no console window:
+
+```powershell
+.\target\release\rustylogviewer.exe --config .\rustylogviewer.toml
+```
+
+When `rustylogviewer.exe` is started without `--config`, startup selection is:
 1. most recent MRU config (if any)
 2. otherwise the first valid `rustylogviewer` `.toml` config discovered in the executable/current directory
 
@@ -43,19 +55,19 @@ cargo run -- /var/log/app.log /tmp/dev.log
 Headless mode:
 
 ```bash
-cargo run -- --headless /var/log/app.log /tmp/dev.log
+cargo run --bin rustylogviewer-cli -- --headless /var/log/app.log /tmp/dev.log
 ```
 
 Print effective config and exit:
 
 ```bash
-cargo run -- --print-config-only /var/log/app.log
+cargo run --bin rustylogviewer-cli -- --print-config-only /var/log/app.log
 ```
 
 Use TOML config:
 
 ```bash
-cargo run -- --config ./rustylogviewer.toml
+cargo run --bin rustylogviewer-cli -- --config ./rustylogviewer.toml
 ```
 
 CLI values override config file values.

@@ -363,6 +363,10 @@ impl TuiState {
         vec![
             Line::from("CLI Command Help (single-letter keys)"),
             Line::from(""),
+            Line::from("CLI exe: rustylogviewer-cli.exe"),
+            Line::from("GUI exe: rustylogviewer.exe"),
+            Line::from("Example: rustylogviewer-cli.exe --config .\\rustylogviewer.toml"),
+            Line::from(""),
             Line::from("q  Quit"),
             Line::from("p  Pause/resume polling"),
             Line::from("j  Scroll toward newest lines"),

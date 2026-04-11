@@ -2,16 +2,14 @@
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use rustylogviewer::cli::CliArgs;
-use rustylogviewer::gui;
+use logtrak::cli::CliArgs;
+use logtrak::gui;
 
 fn main() -> Result<()> {
     let cli = CliArgs::parse();
 
     if cli.headless || cli.print_config_only {
-        bail!(
-            "rustylogviewer.exe supports GUI mode only; use rustylogviewer-cli.exe for CLI options"
-        );
+        bail!("logtrak.exe supports GUI mode only; use logtrak-cli.exe for CLI options");
     }
 
     gui::run_gui(cli.config)

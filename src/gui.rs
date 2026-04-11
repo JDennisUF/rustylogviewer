@@ -13,15 +13,15 @@ const DEFAULT_WINDOW_WIDTH: f32 = 1400.0;
 const DEFAULT_WINDOW_HEIGHT: f32 = 900.0;
 const MAX_RECENT_CONFIGS: usize = 10;
 const EXE_QUICK_START_LINES: &[&str] = &[
-    r#"rustylogviewer.exe"#,
-    r#"rustylogviewer.exe --config ".\configs\team.toml""#,
-    r#"rustylogviewer-cli.exe --headless --config ".\configs\team.toml""#,
-    r#"rustylogviewer-cli.exe --print-config-only --config ".\configs\team.toml""#,
-    r#"rustylogviewer-cli.exe "C:\logs\app.log" "C:\logs\worker.log""#,
+    r#"logtrak.exe"#,
+    r#"logtrak.exe --config ".\configs\team.toml""#,
+    r#"logtrak-cli.exe --headless --config ".\configs\team.toml""#,
+    r#"logtrak-cli.exe --print-config-only --config ".\configs\team.toml""#,
+    r#"logtrak-cli.exe "C:\logs\app.log" "C:\logs\worker.log""#,
 ];
 const EXE_OPTION_LINES: &[&str] = &[
-    "rustylogviewer.exe         Open graphical desktop window",
-    "rustylogviewer-cli.exe     Run TUI or headless CLI modes",
+    "logtrak.exe         Open graphical desktop window",
+    "logtrak-cli.exe     Run TUI or headless CLI modes",
     "--headless                 Print matching events to stdout (no GUI/TUI)",
     "--config <PATH>            Load TOML config file",
     "--print-config-only        Validate config, print effective config, and exit",
@@ -38,16 +38,16 @@ const EXE_OPTION_LINES: &[&str] = &[
 ];
 const WINDOWS_SHORTCUT_LINES: &[&str] = &[
     r#"1. Right-click desktop, choose New > Shortcut"#,
-    r#"2. Target example: "C:\tools\rustylogviewer.exe" --config "C:\tools\configs\team.toml""#,
+    r#"2. Target example: "C:\tools\logtrak.exe" --config "C:\tools\configs\team.toml""#,
     r#"3. Set Start in to the folder containing the exe/configs"#,
     r#"4. Create one shortcut per config so users can launch the right view quickly"#,
 ];
 const CARGO_QUICK_START_LINES: &[&str] = &[
-    "cargo run -- --config ./rustylogviewer.toml",
+    "cargo run -- --config ./logtrak.toml",
     "cargo run",
-    "cargo run --bin rustylogviewer-cli -- --headless --config ./rustylogviewer.toml",
-    "cargo run --bin rustylogviewer-cli -- --print-config-only --config ./rustylogviewer.toml",
-    "cargo run --bin rustylogviewer-cli -- ./app.log ./worker.log",
+    "cargo run --bin logtrak-cli -- --headless --config ./logtrak.toml",
+    "cargo run --bin logtrak-cli -- --print-config-only --config ./logtrak.toml",
+    "cargo run --bin logtrak-cli -- ./app.log ./worker.log",
 ];
 
 pub fn run_gui(initial_config_path: Option<PathBuf>) -> Result<()> {
@@ -58,7 +58,7 @@ pub fn run_gui(initial_config_path: Option<PathBuf>) -> Result<()> {
     };
 
     eframe::run_native(
-        "rustylogviewer",
+        "logtrak",
         options,
         Box::new(move |_cc| Ok(Box::new(GuiApp::new(initial_config_path.clone())))),
     )
@@ -220,7 +220,7 @@ impl GuiApp {
 
     fn save_config_as(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .set_file_name("rustylogviewer.toml")
+            .set_file_name("logtrak.toml")
             .add_filter("TOML Config", &["toml"])
             .save_file()
         else {
@@ -504,7 +504,7 @@ impl GuiApp {
 
 fn gui_state_file_path() -> Option<PathBuf> {
     let base = dirs::config_dir()?;
-    Some(base.join("rustylogviewer").join("gui_state.toml"))
+    Some(base.join("logtrak").join("gui_state.toml"))
 }
 
 fn load_recent_configs(path: Option<&Path>) -> Result<Vec<PathBuf>> {
@@ -968,10 +968,10 @@ tracked_files = ["/tmp/one.log"]
         let usage_text = EXE_QUICK_START_LINES.join("\n");
         let shortcut_text = WINDOWS_SHORTCUT_LINES.join("\n");
 
-        assert!(usage_text.contains("rustylogviewer.exe"));
+        assert!(usage_text.contains("logtrak.exe"));
         assert!(options_text.contains("--config <PATH>"));
         assert!(options_text.contains("--blacklist-regex <REGEX>"));
-        assert!(options_text.contains("rustylogviewer-cli.exe"));
+        assert!(options_text.contains("logtrak-cli.exe"));
         assert!(shortcut_text.contains("New > Shortcut"));
     }
 

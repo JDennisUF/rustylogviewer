@@ -418,7 +418,7 @@ impl TuiState {
             "text-ci=off"
         };
         format!(
-            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}{}  keys:q p j/k g/G f l a / c i ?",
+            "logtrak  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}{}  keys:q p j/k g/G f l a / c i ?",
             self.sources.len(),
             config.poll_interval_ms,
             self.events.len(),
@@ -449,9 +449,9 @@ impl TuiState {
         vec![
             Line::from("CLI Command Help (single-letter keys)"),
             Line::from(""),
-            Line::from("CLI exe: rustylogviewer-cli.exe"),
-            Line::from("GUI exe: rustylogviewer.exe"),
-            Line::from("Example: rustylogviewer-cli.exe --config .\\rustylogviewer.toml"),
+            Line::from("CLI exe: logtrak-cli.exe"),
+            Line::from("GUI exe: logtrak.exe"),
+            Line::from("Example: logtrak-cli.exe --config .\\logtrak.toml"),
             Line::from(""),
             Line::from("q  Quit"),
             Line::from("p  Pause/resume polling"),

@@ -2,11 +2,7 @@ use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
 #[derive(Debug, Default, Parser)]
-#[command(
-    name = "rustylogviewer",
-    version,
-    about = "Compact multi-file log tail viewer"
-)]
+#[command(version, about = "Compact multi-file log tail viewer")]
 pub struct CliArgs {
     /// Optional TOML config file path.
     #[arg(long)]

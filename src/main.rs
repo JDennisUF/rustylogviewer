@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use rustylogviewer::cli::CliArgs;
-use rustylogviewer::config::AppConfig;
-use rustylogviewer::formatting::format_event_line;
-use rustylogviewer::gui;
-use rustylogviewer::line_rules::LineRules;
-use rustylogviewer::ui;
-use rustylogviewer::watcher::PollingWatcher;
+use logtrak::cli::CliArgs;
+use logtrak::config::AppConfig;
+use logtrak::formatting::format_event_line;
+use logtrak::gui;
+use logtrak::line_rules::LineRules;
+use logtrak::ui;
+use logtrak::watcher::PollingWatcher;
 use std::time::Duration;
 
 fn main() -> Result<()> {

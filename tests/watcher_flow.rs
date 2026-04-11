@@ -1,4 +1,4 @@
-use rustylogviewer::watcher::PollingWatcher;
+use logtrak::watcher::PollingWatcher;
 use std::io::Write;
 use tempfile::NamedTempFile;
 

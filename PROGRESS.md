@@ -1,4 +1,4 @@
-# rustylogviewer Progress
+# logtrak Progress
 
 ## Milestones
 

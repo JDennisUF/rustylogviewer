@@ -1,4 +1,4 @@
-# rustylogviewer Development Plan
+# logtrak Development Plan
 
 ## 1. Product Goals
 
@@ -118,13 +118,13 @@ Noise-reduction defaults:
 Example CLI:
 
 ```bash
-rustylogviewer \
-  --config ./rustylogviewer.toml \
+logtrak \
+  --config ./logtrak.toml \
   --poll-ms 1000 \
   /var/log/app.log /tmp/dev.log
 ```
 
-Example config (`rustylogviewer.toml`):
+Example config (`logtrak.toml`):
 
 ```toml
 poll_interval_ms = 1000

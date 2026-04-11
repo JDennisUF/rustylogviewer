@@ -1,6 +1,6 @@
-# rustylogviewer
+# logtrak
 
-`rustylogviewer` is a compact Rust terminal log viewer for tracking appended lines across multiple files in one unified feed.
+`logtrak` is a compact Rust terminal log viewer for tracking appended lines across multiple files in one unified feed.
 
 ## Current Status
 
@@ -27,24 +27,24 @@ cargo run
 Windows shortcut target with no console window:
 
 ```powershell
-.\target\release\rustylogviewer.exe
+.\target\release\logtrak.exe
 ```
 
 GUI with preloaded config:
 
 ```bash
-cargo run -- --config ./rustylogviewer.toml
+cargo run -- --config ./logtrak.toml
 ```
 
 Windows shortcut target with preloaded config and no console window:
 
 ```powershell
-.\target\release\rustylogviewer.exe --config .\rustylogviewer.toml
+.\target\release\logtrak.exe --config .\logtrak.toml
 ```
 
-When `rustylogviewer.exe` is started without `--config`, startup selection is:
+When `logtrak.exe` is started without `--config`, startup selection is:
 1. most recent MRU config (if any)
-2. otherwise the first valid `rustylogviewer` `.toml` config discovered in the executable/current directory
+2. otherwise the first valid `logtrak` `.toml` config discovered in the executable/current directory
 
 TUI mode (default):
 
@@ -55,19 +55,19 @@ cargo run -- /var/log/app.log /tmp/dev.log
 Headless mode:
 
 ```bash
-cargo run --bin rustylogviewer-cli -- --headless /var/log/app.log /tmp/dev.log
+cargo run --bin logtrak-cli -- --headless /var/log/app.log /tmp/dev.log
 ```
 
 Print effective config and exit:
 
 ```bash
-cargo run --bin rustylogviewer-cli -- --print-config-only /var/log/app.log
+cargo run --bin logtrak-cli -- --print-config-only /var/log/app.log
 ```
 
 Use TOML config:
 
 ```bash
-cargo run --bin rustylogviewer-cli -- --config ./rustylogviewer.toml
+cargo run --bin logtrak-cli -- --config ./logtrak.toml
 ```
 
 CLI values override config file values.
@@ -100,7 +100,7 @@ Regex rules:
 
 ## Config Example
 
-See [`rustylogviewer.toml.example`](./rustylogviewer.toml.example).
+See [`logtrak.toml.example`](./logtrak.toml.example).
 
 ## GUI Roadmap
 

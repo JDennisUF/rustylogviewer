@@ -1,8 +1,8 @@
 [package]
-name = "rustylogviewer"
+name = "logtrak"
 version = "0.1.0"
 edition = "2024"
-default-run = "rustylogviewer"
+default-run = "logtrak"
 autobins = false
 
 [dependencies]
@@ -23,9 +23,9 @@ toml = "0.8"
 tempfile = "3.10"
 
 [[bin]]
-name = "rustylogviewer"
-path = "src/bin/rustylogviewer-gui.rs"
+name = "logtrak"
+path = "src/bin/logtrak-gui.rs"
 
 [[bin]]
-name = "rustylogviewer-cli"
+name = "logtrak-cli"
 path = "src/main.rs"

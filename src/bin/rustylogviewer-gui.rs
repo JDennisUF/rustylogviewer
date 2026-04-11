@@ -9,7 +9,9 @@ fn main() -> Result<()> {
     let cli = CliArgs::parse();
 
     if cli.headless || cli.print_config_only {
-        bail!("rustylogviewer.exe supports GUI mode only; use rustylogviewer-cli.exe for CLI options");
+        bail!(
+            "rustylogviewer.exe supports GUI mode only; use rustylogviewer-cli.exe for CLI options"
+        );
     }
 
     gui::run_gui(cli.config)

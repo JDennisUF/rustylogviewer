@@ -36,6 +36,14 @@ impl PollingWatcher {
         }
         Ok(out)
     }
+
+    pub fn add_file(&mut self, path: PathBuf) -> Result<bool> {
+        if self.tracked_files.iter().any(|state| state.path == path) {
+            return Ok(false);
+        }
+        self.tracked_files.push(TrackedFileState::new(path)?);
+        Ok(true)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -249,5 +257,21 @@ mod tests {
         let events = watcher.poll().expect("poll");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].line, "partial-line");
+    }
+
+    #[test]
+    fn add_file_tracks_new_path_and_rejects_duplicate() {
+        let first = NamedTempFile::new().expect("first temp file");
+        let second = NamedTempFile::new().expect("second temp file");
+        let first_path = first.path().to_path_buf();
+        let second_path = second.path().to_path_buf();
+        let mut watcher = PollingWatcher::new(vec![first_path.clone()], 512).expect("watcher");
+
+        assert!(watcher.add_file(second_path).expect("add second file"));
+        assert!(
+            !watcher
+                .add_file(first_path)
+                .expect("duplicate returns false")
+        );
     }
 }

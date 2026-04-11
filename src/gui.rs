@@ -84,6 +84,7 @@ struct GuiApp {
     last_poll_at: Instant,
     text_filter: String,
     source_filter: Option<String>,
+    pending_dropped_config_path: Option<PathBuf>,
     config_panel_visible: bool,
     last_applied_theme: Option<GuiTheme>,
     last_applied_font_size: Option<f32>,
@@ -142,6 +143,7 @@ impl GuiApp {
             last_poll_at: Instant::now(),
             text_filter: String::new(),
             source_filter: None,
+            pending_dropped_config_path: None,
             config_panel_visible: true,
             last_applied_theme: None,
             last_applied_font_size: None,
@@ -175,6 +177,28 @@ impl GuiApp {
             Err(err) => {
                 self.status_message = format!("Failed to load {}: {}", path.display(), err);
             }
+        }
+    }
+
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped_files = ctx.input(|input| input.raw.dropped_files.clone());
+        if dropped_files.is_empty() {
+            return;
+        }
+
+        let Some(path) = first_dropped_toml_path(&dropped_files) else {
+            self.status_message = "Dropped file is not a .toml config".to_string();
+            return;
+        };
+
+        if self.running {
+            self.pending_dropped_config_path = Some(path.clone());
+            self.status_message = format!(
+                "Dropped {}. Confirm stopping active logs before loading.",
+                path.display()
+            );
+        } else {
+            self.open_config(path);
         }
     }
 
@@ -551,11 +575,7 @@ fn discover_app_configs_in_roots(search_roots: &[PathBuf]) -> Vec<PathBuf> {
             if !path.is_file() {
                 continue;
             }
-            let is_toml = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
-            if !is_toml {
+            if !is_toml_file_path(&path) {
                 continue;
             }
             if AppConfig::from_file(&path).is_ok() {
@@ -572,6 +592,19 @@ fn discover_app_configs_in_roots(search_roots: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
     discovered
+}
+
+fn is_toml_file_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
+}
+
+fn first_dropped_toml_path(dropped_files: &[egui::DroppedFile]) -> Option<PathBuf> {
+    dropped_files
+        .iter()
+        .filter_map(|file| file.path.clone())
+        .find(|path| is_toml_file_path(path))
 }
 
 fn select_startup_config(initial: Option<PathBuf>, recent: &[PathBuf]) -> Option<PathBuf> {
@@ -941,10 +974,41 @@ tracked_files = ["/tmp/one.log"]
         assert!(options_text.contains("rustylogviewer-cli.exe"));
         assert!(shortcut_text.contains("New > Shortcut"));
     }
+
+    #[test]
+    fn first_dropped_toml_path_prefers_toml_with_path() {
+        let dropped_files = vec![
+            egui::DroppedFile {
+                path: Some(PathBuf::from("/tmp/readme.txt")),
+                ..Default::default()
+            },
+            egui::DroppedFile {
+                path: Some(PathBuf::from("/tmp/team.TOML")),
+                ..Default::default()
+            },
+        ];
+
+        let selected = first_dropped_toml_path(&dropped_files);
+        assert_eq!(selected, Some(PathBuf::from("/tmp/team.TOML")));
+    }
+
+    #[test]
+    fn first_dropped_toml_path_returns_none_without_toml() {
+        let dropped_files = vec![
+            egui::DroppedFile {
+                path: Some(PathBuf::from("/tmp/readme.txt")),
+                ..Default::default()
+            },
+            egui::DroppedFile::default(),
+        ];
+
+        assert_eq!(first_dropped_toml_path(&dropped_files), None);
+    }
 }
 
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_dropped_files(ctx);
         self.maybe_apply_visual_theme(ctx);
         self.maybe_reload_rules_while_running();
         let polled_changed = self.poll_if_due();
@@ -959,6 +1023,8 @@ impl eframe::App for GuiApp {
         let mut open_recent_from_menu: Option<PathBuf> = None;
         let mut clear_recent_from_menu = false;
         let recent_snapshot = self.recent_configs.clone();
+        let mut confirm_load_dropped_config = false;
+        let mut cancel_load_dropped_config = false;
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -1028,6 +1094,35 @@ impl eframe::App for GuiApp {
         if clear_recent_from_menu {
             self.clear_recent_configs();
             self.status_message = "Cleared recent config list".to_string();
+        }
+
+        if let Some(path) = self.pending_dropped_config_path.as_ref() {
+            egui::Window::new("Apply Dropped Config?")
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("A config file was dropped while logs are being tracked.");
+                    ui.label(format!("File: {}", path.display()));
+                    ui.label("Stop current tracking and apply this config?");
+                    ui.horizontal(|ui| {
+                        if ui.button("Stop and Load").clicked() {
+                            confirm_load_dropped_config = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_load_dropped_config = true;
+                        }
+                    });
+                });
+        }
+        if confirm_load_dropped_config {
+            if let Some(path) = self.pending_dropped_config_path.take() {
+                self.open_config(path);
+            }
+        }
+        if cancel_load_dropped_config {
+            self.pending_dropped_config_path = None;
+            self.status_message = "Dropped config ignored; current tracking continues".to_string();
         }
 
         if self.config_panel_visible {

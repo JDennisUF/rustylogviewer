@@ -3,7 +3,9 @@ use crate::formatting::format_event_line;
 use crate::line_rules::LineRules;
 use crate::watcher::{LogEvent, PollingWatcher};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -12,6 +14,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Paragraph};
 use std::collections::VecDeque;
 use std::io;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub fn run_tui(config: AppConfig) -> Result<()> {
@@ -21,7 +24,7 @@ pub fn run_tui(config: AppConfig) -> Result<()> {
     let mut state = TuiState::new(&config);
 
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     let _cleanup = TerminalCleanup;
     let mut terminal = ratatui::Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
@@ -54,15 +57,36 @@ pub fn run_tui(config: AppConfig) -> Result<()> {
         if !event::poll(timeout)? {
             continue;
         }
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        if key.kind != KeyEventKind::Press {
-            continue;
+        match event::read()? {
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if state.handle_key(key.code) {
+                    break;
+                }
+            }
+            Event::Paste(text) => {
+                state.handle_paste(text);
+            }
+            _ => continue,
         }
 
-        if state.handle_key(key.code) {
-            break;
+        if let Some(raw_path) = state.take_pending_add_tracked_file() {
+            match parse_cli_input_path(&raw_path) {
+                Some(path) => match watcher.add_file(path.clone()) {
+                    Ok(true) => state.add_tracked_file(path),
+                    Ok(false) => {
+                        state.set_status(format!("Already tracking {}", path.display()));
+                    }
+                    Err(err) => {
+                        state.set_status(format!("Failed to track {}: {}", path.display(), err));
+                    }
+                },
+                None => {
+                    state.set_status("No file path entered".to_string());
+                }
+            }
         }
         dirty = true;
     }
@@ -74,7 +98,7 @@ struct TerminalCleanup;
 impl Drop for TerminalCleanup {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
 
@@ -128,11 +152,14 @@ struct TuiState {
     scroll_offset: usize,
     sources: Vec<String>,
     tracked_files: Vec<String>,
+    status_message: String,
     active_source_filter_idx: Option<usize>,
     text_filter: String,
     text_filter_folded: String,
     case_insensitive_text_filter: bool,
     search_input: String,
+    add_file_input: String,
+    pending_add_tracked_file: Option<String>,
     input_mode: InputMode,
 }
 
@@ -140,6 +167,7 @@ struct TuiState {
 enum InputMode {
     Normal,
     Search,
+    AddTrackedFile,
     ListTrackedFiles,
     Help,
 }
@@ -170,11 +198,14 @@ impl TuiState {
             scroll_offset: 0,
             sources,
             tracked_files,
+            status_message: String::new(),
             active_source_filter_idx: None,
             text_filter: String::new(),
             text_filter_folded: String::new(),
             case_insensitive_text_filter: config.case_insensitive_text_filter,
             search_input: String::new(),
+            add_file_input: String::new(),
+            pending_add_tracked_file: None,
             input_mode: InputMode::Normal,
         }
     }
@@ -199,6 +230,9 @@ impl TuiState {
     fn handle_key(&mut self, key: KeyCode) -> bool {
         if self.input_mode == InputMode::Search {
             return self.handle_search_key(key);
+        }
+        if self.input_mode == InputMode::AddTrackedFile {
+            return self.handle_add_file_key(key);
         }
         if self.input_mode == InputMode::ListTrackedFiles {
             return self.handle_tracked_files_key(key);
@@ -248,6 +282,11 @@ impl TuiState {
                 self.scroll_offset = 0;
                 false
             }
+            KeyCode::Char('a') => {
+                self.input_mode = InputMode::AddTrackedFile;
+                self.add_file_input.clear();
+                false
+            }
             KeyCode::Char('l') => {
                 self.input_mode = InputMode::ListTrackedFiles;
                 false
@@ -280,6 +319,42 @@ impl TuiState {
             _ => {}
         }
         false
+    }
+
+    fn handle_add_file_key(&mut self, key: KeyCode) -> bool {
+        match key {
+            KeyCode::Esc => {
+                self.add_file_input.clear();
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Enter => {
+                self.pending_add_tracked_file = Some(self.add_file_input.trim().to_string());
+                self.add_file_input.clear();
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Backspace => {
+                self.add_file_input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.add_file_input.push(c);
+            }
+            _ => {}
+        }
+        false
+    }
+
+    fn handle_paste(&mut self, text: String) {
+        if self.input_mode == InputMode::AddTrackedFile {
+            let sanitized = text.replace(['\n', '\r'], "");
+            self.add_file_input.push_str(&sanitized);
+            return;
+        }
+
+        let trimmed = text.trim();
+        if !looks_like_path(trimmed) {
+            return;
+        }
+        self.pending_add_tracked_file = Some(trimmed.to_string());
     }
 
     fn handle_tracked_files_key(&mut self, key: KeyCode) -> bool {
@@ -315,8 +390,14 @@ impl TuiState {
                 self.search_input
             );
         }
+        if self.input_mode == InputMode::AddTrackedFile {
+            return format!(
+                "add file:{}  Enter add  Esc cancel  Backspace delete",
+                self.add_file_input
+            );
+        }
         if self.input_mode == InputMode::ListTrackedFiles {
-            return "tracked files  keys:l/Esc/Enter close  q quit".to_string();
+            return "tracked files  keys:l/Esc/Enter close  a add file  q quit".to_string();
         }
         if self.input_mode == InputMode::Help {
             return "help  keys:?/Esc/Enter close  q quit".to_string();
@@ -337,7 +418,7 @@ impl TuiState {
             "text-ci=off"
         };
         format!(
-            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}  keys:q p j/k g/G f l / c i ?",
+            "rustylogviewer  files={}  poll={}ms  lines={}  seen={}  dropped={}  suppressed={}  {}  {}  {}  {}{}  keys:q p j/k g/G f l a / c i ?",
             self.sources.len(),
             config.poll_interval_ms,
             self.events.len(),
@@ -347,7 +428,12 @@ impl TuiState {
             if self.paused { "paused" } else { "live" },
             source_filter_label,
             text_filter_label,
-            text_mode_label
+            text_mode_label,
+            if self.status_message.is_empty() {
+                String::new()
+            } else {
+                format!("  status={}", self.status_message)
+            }
         )
     }
 
@@ -375,6 +461,7 @@ impl TuiState {
             Line::from("G  Jump to newest lines"),
             Line::from("f  Cycle source-file filter"),
             Line::from("l  Show tracked file list"),
+            Line::from("a  Add a log file to track (type/paste path, Enter)"),
             Line::from("c  Clear text filter"),
             Line::from("i  Toggle case-insensitive text filter"),
             Line::from("?  Toggle this help panel"),
@@ -447,6 +534,50 @@ impl TuiState {
         self.text_filter = filter;
         self.text_filter_folded = self.text_filter.to_lowercase();
     }
+
+    fn take_pending_add_tracked_file(&mut self) -> Option<String> {
+        self.pending_add_tracked_file.take()
+    }
+
+    fn add_tracked_file(&mut self, path: PathBuf) {
+        let source = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        self.sources.push(source);
+        self.tracked_files.push(path.display().to_string());
+        self.set_status(format!("Now tracking {}", path.display()));
+    }
+
+    fn set_status(&mut self, message: String) {
+        self.status_message = message;
+    }
+}
+
+fn parse_cli_input_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.len() >= 2
+        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+    {
+        return Some(PathBuf::from(&trimmed[1..trimmed.len() - 1]));
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+fn looks_like_path(input: &str) -> bool {
+    if input.is_empty() {
+        return false;
+    }
+    input.starts_with('/')
+        || input.starts_with("./")
+        || input.starts_with("../")
+        || input.starts_with('~')
+        || input.contains('\\')
+        || input.chars().nth(1).is_some_and(|ch| ch == ':')
 }
 
 #[cfg(test)]
@@ -593,5 +724,62 @@ mod tests {
         assert_eq!(state.input_mode, InputMode::Help);
         state.handle_key(KeyCode::Char('?'));
         assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn parse_cli_input_path_trims_and_unquotes() {
+        assert_eq!(
+            parse_cli_input_path(r#"  "/tmp/a.log"  "#),
+            Some(PathBuf::from("/tmp/a.log"))
+        );
+        assert_eq!(
+            parse_cli_input_path("'/tmp/b.log'"),
+            Some(PathBuf::from("/tmp/b.log"))
+        );
+        assert_eq!(
+            parse_cli_input_path("/tmp/c.log"),
+            Some(PathBuf::from("/tmp/c.log"))
+        );
+        assert_eq!(parse_cli_input_path("   "), None);
+    }
+
+    #[test]
+    fn add_file_input_submits_pending_path() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+
+        state.handle_key(KeyCode::Char('a'));
+        assert_eq!(state.input_mode, InputMode::AddTrackedFile);
+        state.handle_key(KeyCode::Char('/'));
+        state.handle_key(KeyCode::Char('t'));
+        state.handle_key(KeyCode::Char('m'));
+        state.handle_key(KeyCode::Char('p'));
+        state.handle_key(KeyCode::Char('/'));
+        state.handle_key(KeyCode::Char('n'));
+        state.handle_key(KeyCode::Char('e'));
+        state.handle_key(KeyCode::Char('w'));
+        state.handle_key(KeyCode::Char('.'));
+        state.handle_key(KeyCode::Char('l'));
+        state.handle_key(KeyCode::Char('o'));
+        state.handle_key(KeyCode::Char('g'));
+        state.handle_key(KeyCode::Enter);
+
+        assert_eq!(state.input_mode, InputMode::Normal);
+        assert_eq!(
+            state.take_pending_add_tracked_file(),
+            Some("/tmp/new.log".to_string())
+        );
+    }
+
+    #[test]
+    fn paste_path_in_normal_mode_queues_add_file() {
+        let config = test_config();
+        let mut state = TuiState::new(&config);
+
+        state.handle_paste("/tmp/from-paste.log".to_string());
+        assert_eq!(
+            state.take_pending_add_tracked_file(),
+            Some("/tmp/from-paste.log".to_string())
+        );
     }
 }

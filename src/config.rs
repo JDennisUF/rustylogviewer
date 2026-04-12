@@ -142,6 +142,23 @@ impl AppConfig {
         Ok(config)
     }
 
+    pub fn from_cli_allow_empty_files(cli: &CliArgs) -> Result<Self> {
+        let file_cfg = match cli.config.as_ref() {
+            Some(path) => Some(load_config_file(path)?),
+            None => None,
+        };
+        let config = merge_config(file_cfg, cli)?;
+        validate_allowing_empty_tracked_files(&config)?;
+        Ok(config)
+    }
+
+    pub fn from_file_allow_empty_files(path: &Path) -> Result<Self> {
+        let cli = CliArgs::default();
+        let config = merge_config(Some(load_config_file(path)?), &cli)?;
+        validate_allowing_empty_tracked_files(&config)?;
+        Ok(config)
+    }
+
     pub fn to_toml_string(&self) -> Result<String> {
         Ok(toml::to_string_pretty(self)?)
     }
@@ -228,6 +245,21 @@ impl AppConfig {
             })?;
         }
         Ok(())
+    }
+}
+
+fn validate_allowing_empty_tracked_files(config: &AppConfig) -> Result<()> {
+    match config.validate() {
+        Ok(()) => Ok(()),
+        Err(err)
+            if matches!(
+                err.downcast_ref::<ConfigValidationError>(),
+                Some(ConfigValidationError::NoTrackedFiles)
+            ) =>
+        {
+            Ok(())
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -491,6 +523,37 @@ tracked_files = ["./a.log", "./b.log"]
 
         let err = AppConfig::from_cli(&cli).expect_err("expected missing files validation error");
         assert!(err.to_string().contains("no tracked files configured"));
+    }
+
+    #[test]
+    fn allow_empty_files_loader_accepts_no_tracked_files() {
+        let file = write_config(
+            r#"
+poll_interval_ms = 1000
+max_buffer_lines = 100
+max_line_len = 128
+show_timestamps = true
+"#,
+        );
+        let cli = CliArgs {
+            config: Some(file.path().to_path_buf()),
+            poll_ms: None,
+            max_buffer_lines: None,
+            max_line_len: None,
+            show_timestamps: false,
+            no_timestamps: false,
+            print_config_only: false,
+            headless: false,
+            gui: false,
+            case_insensitive_filter: false,
+            case_sensitive_filter: false,
+            blacklist_regex: Vec::new(),
+            whitelist_regex: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let config = AppConfig::from_cli_allow_empty_files(&cli).expect("allow empty files");
+        assert!(config.tracked_files.is_empty());
     }
 
     #[test]

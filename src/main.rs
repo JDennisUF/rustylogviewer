@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     if cli.headless {
         run_headless(config)
     } else {
-        ui::run_tui(config)
+        ui::run_tui(config, cli.config.clone())
     }
 }
 
@@ -40,6 +40,9 @@ fn run_headless(config: AppConfig) -> Result<()> {
     let rules = LineRules::new(&config.blacklist_regex, &config.whitelist_regex)?;
     loop {
         let events = watcher.poll()?;
+        for warning in watcher.take_status_messages() {
+            eprintln!("{}", warning);
+        }
         let (events, _suppressed) = rules.partition_events(events);
         for event in events {
             println!("{}", format_event_line(&event, config.show_timestamps));

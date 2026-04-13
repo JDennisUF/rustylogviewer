@@ -351,11 +351,16 @@ impl GuiApp {
                 return true;
             }
         };
+        let warnings = watcher.take_status_messages();
+        let mut changed = false;
+        if !warnings.is_empty() {
+            self.status_message = warnings.join(" | ");
+            changed = true;
+        }
         let Some(rules) = self.rules.as_ref() else {
             return false;
         };
         let (events, suppressed) = rules.partition_events(events);
-        let mut changed = false;
         if suppressed > 0 {
             self.suppressed_by_rules += suppressed as u64;
             changed = true;

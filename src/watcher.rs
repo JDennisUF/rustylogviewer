@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::fs::{File, Metadata};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -15,6 +16,8 @@ pub struct LogEvent {
 pub struct PollingWatcher {
     tracked_files: Vec<TrackedFileState>,
     max_line_len: usize,
+    unreadable_files: HashMap<PathBuf, String>,
+    status_messages: Vec<String>,
 }
 
 impl PollingWatcher {
@@ -26,15 +29,42 @@ impl PollingWatcher {
         Ok(Self {
             tracked_files,
             max_line_len,
+            unreadable_files: HashMap::new(),
+            status_messages: Vec::new(),
         })
     }
 
     pub fn poll(&mut self) -> Result<Vec<LogEvent>> {
+        self.status_messages.clear();
         let mut out = Vec::new();
         for state in &mut self.tracked_files {
-            state.poll(self.max_line_len, &mut out)?;
+            match state.poll(self.max_line_len, &mut out) {
+                Ok(()) => {
+                    if self.unreadable_files.remove(&state.path).is_some() {
+                        self.status_messages
+                            .push(format!("File readable again: {}", state.path.display()));
+                    }
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    let previous = self
+                        .unreadable_files
+                        .insert(state.path.clone(), message.clone());
+                    if previous.as_ref() != Some(&message) {
+                        self.status_messages.push(format!(
+                            "Ignoring unreadable file {}: {}",
+                            state.path.display(),
+                            message
+                        ));
+                    }
+                }
+            }
         }
         Ok(out)
+    }
+
+    pub fn take_status_messages(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.status_messages)
     }
 
     pub fn add_file(&mut self, path: PathBuf) -> Result<bool> {
@@ -201,6 +231,7 @@ impl FileIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -273,5 +304,23 @@ mod tests {
                 .add_file(first_path)
                 .expect("duplicate returns false")
         );
+    }
+
+    #[test]
+    fn unreadable_file_is_ignored_and_reported_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blocked_path = dir.path().join("blocked");
+        let mut watcher = PollingWatcher::new(vec![blocked_path.clone()], 512).expect("watcher");
+        fs::create_dir(&blocked_path).expect("create directory at tracked path");
+
+        let events = watcher.poll().expect("poll should not fail");
+        assert!(events.is_empty());
+        let messages = watcher.take_status_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("Ignoring unreadable file"));
+
+        let events = watcher.poll().expect("poll should not fail");
+        assert!(events.is_empty());
+        assert!(watcher.take_status_messages().is_empty());
     }
 }

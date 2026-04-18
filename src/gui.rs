@@ -1224,15 +1224,23 @@ impl eframe::App for GuiApp {
                     for (idx, path) in self.config.tracked_files.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
                             let mut value = path.display().to_string();
-                            if ui
-                                .add(TextEdit::singleline(&mut value).desired_width(220.0))
-                                .changed()
-                            {
-                                *path = PathBuf::from(value);
-                            }
-                            if ui.small_button("X").clicked() {
-                                remove_file_idx = Some(idx);
-                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("X").clicked() {
+                                        remove_file_idx = Some(idx);
+                                    }
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 0.0],
+                                            TextEdit::singleline(&mut value),
+                                        )
+                                        .changed()
+                                    {
+                                        *path = PathBuf::from(value);
+                                    }
+                                },
+                            );
                         });
                     }
                     if let Some(idx) = remove_file_idx {

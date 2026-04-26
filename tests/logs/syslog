@@ -1,0 +1,2 @@
+Apr 25 10:15:03 pop-os kernel: usb 1-2: new high-speed USB device number 4 using xhci_hcd
+Apr 25 10:15:04 pop-os systemd[1]: Started Daily apt download activities.

@@ -19,4 +19,10 @@ whitelist_regex = [
 tracked_files = [
   "/var/log/app.log",
   "/tmp/dev.log",
+  "/tmp/app-*.log",
+  # Date placeholders are resolved at poll time, so daily rollover works without restarting.
+  "/tmp/app_{yyyymmdd}.log",
+  # `{today}` tries several common numeric formats for the current date:
+  # yyyymmdd, yyyy-mm-dd, yyyy_mm_dd, mmdd, mm-dd, mm_dd, yymmdd, yy-mm-dd, yy_mm_dd
+  "/tmp/daily_{today}.log",
 ]

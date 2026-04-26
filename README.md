@@ -72,6 +72,21 @@ cargo run --bin logtrak-cli -- --config ./logtrak.toml
 
 CLI values override config file values.
 
+Tracked-file date placeholders:
+
+- explicit tokens like `"/tmp/app_{yyyy}{mm}{dd}.log"` or `"/tmp/app_{mmdd}.log"`
+- `"{today}"` as a shorthand that checks several common numeric formats for the current date:
+  `yyyymmdd`, `yyyy-mm-dd`, `yyyy_mm_dd`, `mmdd`, `mm-dd`, `mm_dd`, `yymmdd`, `yy-mm-dd`, `yy_mm_dd`
+
+Placeholders are resolved during polling, so a long-running session can roll over to the new day's log automatically.
+
+Tracked-file wildcards:
+
+- simple `*` and `?` wildcards are supported in the final filename segment, for example `"/var/log/app-*.log"`
+- recursive `**` patterns are not supported
+- matches are capped at `200` files per tracked pattern, with a warning if the cap is hit
+- wildcard patterns are resolved during polling, so newly created matching files can be picked up without restarting
+
 Regex rules:
 
 - `blacklist_regex`: hide matching lines.

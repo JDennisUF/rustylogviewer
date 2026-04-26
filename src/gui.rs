@@ -84,6 +84,7 @@ struct GuiApp {
     last_poll_at: Instant,
     text_filter: String,
     source_filter: Option<String>,
+    tracked_files_window_open: bool,
     pending_dropped_config_path: Option<PathBuf>,
     config_panel_visible: bool,
     last_applied_theme: Option<GuiTheme>,
@@ -143,6 +144,7 @@ impl GuiApp {
             last_poll_at: Instant::now(),
             text_filter: String::new(),
             source_filter: None,
+            tracked_files_window_open: false,
             pending_dropped_config_path: None,
             config_panel_visible: true,
             last_applied_theme: None,
@@ -380,17 +382,36 @@ impl GuiApp {
 
     fn available_sources(&self) -> Vec<String> {
         let mut names = BTreeSet::new();
-        for path in &self.config.tracked_files {
-            if let Some(name) = path.file_name() {
-                names.insert(name.to_string_lossy().into_owned());
-            } else {
-                names.insert(path.display().to_string());
+        if let Some(watcher) = self.watcher.as_ref() {
+            names.extend(watcher.active_sources());
+        } else {
+            for path in &self.config.tracked_files {
+                if let Some(name) = path.file_name() {
+                    names.insert(name.to_string_lossy().into_owned());
+                } else {
+                    names.insert(path.display().to_string());
+                }
             }
         }
         for event in &self.events {
             names.insert(event.source.clone());
         }
         names.into_iter().collect()
+    }
+
+    fn tracked_file_list(&self) -> Vec<String> {
+        if let Some(watcher) = self.watcher.as_ref() {
+            let active = watcher.active_file_paths();
+            if !active.is_empty() {
+                return active;
+            }
+        }
+
+        self.config
+            .tracked_files
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect()
     }
 
     fn display_matches_filters(
@@ -861,6 +882,48 @@ fn render_startup_help(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::GuiTheme;
+    use std::collections::VecDeque;
+
+    fn test_gui_app() -> GuiApp {
+        GuiApp {
+            config: AppConfig {
+                poll_interval_ms: 1000,
+                tracked_files: vec![PathBuf::from("/tmp/app_{today}.log")],
+                max_buffer_lines: 100,
+                max_line_len: 256,
+                show_timestamps: true,
+                gui_light_mode: false,
+                gui_theme: GuiTheme::DefaultDark,
+                gui_word_wrap: true,
+                gui_font_size: 14.0,
+                case_insensitive_text_filter: true,
+                blacklist_regex: Vec::new(),
+                whitelist_regex: Vec::new(),
+            },
+            config_path: None,
+            recent_configs: Vec::new(),
+            state_file_path: None,
+            status_message: String::new(),
+            events: VecDeque::new(),
+            total_seen: 0,
+            dropped: 0,
+            suppressed_by_rules: 0,
+            running: false,
+            watcher: None,
+            rules: None,
+            active_blacklist_regex: Vec::new(),
+            active_whitelist_regex: Vec::new(),
+            last_poll_at: Instant::now(),
+            text_filter: String::new(),
+            source_filter: None,
+            tracked_files_window_open: false,
+            pending_dropped_config_path: None,
+            config_panel_visible: true,
+            last_applied_theme: None,
+            last_applied_font_size: None,
+        }
+    }
 
     #[test]
     fn load_recent_configs_missing_file_is_empty() {
@@ -1008,6 +1071,39 @@ tracked_files = ["/tmp/one.log"]
         ];
 
         assert_eq!(first_dropped_toml_path(&dropped_files), None);
+    }
+
+    #[test]
+    fn available_sources_prefer_resolved_watcher_sources() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("app_20260425.log"), "a\n").expect("write app a");
+        std::fs::write(dir.path().join("app_0425.log"), "b\n").expect("write app b");
+
+        let mut app = test_gui_app();
+        let watcher =
+            PollingWatcher::new(vec![dir.path().join("app_{today}.log")], 256).expect("watcher");
+        let expected = watcher.active_sources();
+        app.watcher = Some(watcher);
+
+        assert_eq!(app.available_sources(), expected);
+    }
+
+    #[test]
+    fn tracked_file_list_returns_resolved_active_files_when_running() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_a = dir.path().join("app_20260425.log");
+        let app_b = dir.path().join("app_0425.log");
+        std::fs::write(&app_a, "a\n").expect("write app a");
+        std::fs::write(&app_b, "b\n").expect("write app b");
+
+        let mut app = test_gui_app();
+        app.running = true;
+        let watcher =
+            PollingWatcher::new(vec![dir.path().join("app_{today}.log")], 256).expect("watcher");
+        let expected = watcher.active_file_paths();
+        app.watcher = Some(watcher);
+
+        assert_eq!(app.tracked_file_list(), expected);
     }
 }
 
@@ -1340,8 +1436,11 @@ impl eframe::App for GuiApp {
             ui.horizontal(|ui| {
                 ui.label("Source");
                 egui::ComboBox::from_id_salt("source-filter")
+                    .width(320.0)
                     .selected_text(self.source_filter.as_deref().unwrap_or("All"))
                     .show_ui(ui, |ui| {
+                        ui.set_min_width(320.0);
+                        ui.set_max_height(ui.text_style_height(&TextStyle::Body) * 12.0);
                         ui.selectable_value(&mut self.source_filter, None, "All");
                         for source in self.available_sources() {
                             ui.selectable_value(
@@ -1351,6 +1450,9 @@ impl eframe::App for GuiApp {
                             );
                         }
                     });
+                if ui.button("Tracked Files").clicked() {
+                    self.tracked_files_window_open = true;
+                }
 
                 ui.label("Text");
                 ui.add(TextEdit::singleline(&mut self.text_filter).desired_width(240.0));
@@ -1414,5 +1516,33 @@ impl eframe::App for GuiApp {
                     }
                 });
         });
+
+        if self.tracked_files_window_open {
+            let tracked_files = self.tracked_file_list();
+            egui::Window::new("Tracked Files")
+                .open(&mut self.tracked_files_window_open)
+                .resizable(true)
+                .default_width(640.0)
+                .show(ctx, |ui| {
+                    if self.running {
+                        ui.label("Resolved active tracked files");
+                    } else {
+                        ui.label("Configured tracked files");
+                    }
+                    ui.label(format!("Count: {}", tracked_files.len()));
+                    ui.separator();
+                    if tracked_files.is_empty() {
+                        ui.label("No tracked files configured.");
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for path in tracked_files {
+                                    ui.label(RichText::new(path).monospace());
+                                }
+                            });
+                    }
+                });
+        }
     }
 }

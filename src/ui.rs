@@ -22,6 +22,7 @@ pub fn run_tui(mut config: AppConfig, config_path: Option<PathBuf>) -> Result<()
     let mut watcher = PollingWatcher::new(config.tracked_files.clone(), config.max_line_len)?;
     let rules = LineRules::new(&config.blacklist_regex, &config.whitelist_regex)?;
     let mut state = TuiState::new(&config);
+    state.set_available_sources(watcher.active_sources());
 
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
@@ -33,6 +34,7 @@ pub fn run_tui(mut config: AppConfig, config_path: Option<PathBuf>) -> Result<()
     loop {
         if !state.paused && Instant::now() >= next_poll {
             let events = watcher.poll()?;
+            state.set_available_sources(watcher.active_sources());
             let warnings = watcher.take_status_messages();
             if !warnings.is_empty() {
                 state.set_status(warnings.join(" | "));
@@ -88,6 +90,7 @@ pub fn run_tui(mut config: AppConfig, config_path: Option<PathBuf>) -> Result<()
                         {
                             config.tracked_files.push(path.clone());
                         }
+                        state.set_available_sources(watcher.active_sources());
                         state.add_tracked_file(path);
                     }
                     Ok(false) => {
@@ -761,16 +764,20 @@ impl TuiState {
         self.text_filter_folded = self.text_filter.to_lowercase();
     }
 
+    fn set_available_sources(&mut self, sources: Vec<String>) {
+        let selected_source = self
+            .active_source_filter_idx
+            .and_then(|idx| self.sources.get(idx).cloned());
+        self.sources = sources;
+        self.active_source_filter_idx =
+            selected_source.and_then(|selected| self.sources.iter().position(|s| s == &selected));
+    }
+
     fn take_pending_add_tracked_file(&mut self) -> Option<String> {
         self.pending_add_tracked_file.take()
     }
 
     fn add_tracked_file(&mut self, path: PathBuf) {
-        let source = path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
-        self.sources.push(source);
         self.tracked_files.push(path.display().to_string());
         self.set_status(format!("Now tracking {}", path.display()));
     }
@@ -1035,6 +1042,23 @@ mod tests {
         assert_eq!(state.input_mode, InputMode::ListTrackedFiles);
         state.handle_key(KeyCode::Esc);
         assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn available_sources_replace_raw_pattern_entries() {
+        let mut config = test_config();
+        config.tracked_files = vec![PathBuf::from("/tmp/app_{today}.log")];
+
+        let mut state = TuiState::new(&config);
+        state.set_available_sources(vec![
+            "app_20260425.log".to_string(),
+            "app_0425.log".to_string(),
+        ]);
+
+        assert_eq!(
+            state.sources,
+            vec!["app_20260425.log".to_string(), "app_0425.log".to_string()]
+        );
     }
 
     #[test]

@@ -1,0 +1,2 @@
+Apr 25 10:16:42 pop-os sudo:   demo : TTY=pts/0 ; PWD=/home/demo ; USER=root ; COMMAND=/usr/bin/systemctl status ssh
+Apr 25 10:16:42 pop-os sudo: pam_unix(sudo:session): session opened for user root(uid=0) by demo(uid=1000)

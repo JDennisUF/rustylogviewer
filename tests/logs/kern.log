@@ -1,0 +1,1 @@
+Apr 25 10:15:03 pop-os kernel: audit: type=1400 audit(1714030503.123:42): apparmor="STATUS" operation="profile_load" profile="unconfined"

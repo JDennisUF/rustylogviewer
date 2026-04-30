@@ -19,7 +19,11 @@ use std::time::{Duration, Instant};
 
 pub fn run_tui(mut config: AppConfig, config_path: Option<PathBuf>) -> Result<()> {
     let poll_interval = Duration::from_millis(config.poll_interval_ms);
-    let mut watcher = PollingWatcher::new(config.tracked_files.clone(), config.max_line_len)?;
+    let mut watcher = PollingWatcher::with_file_enabled(
+        config.tracked_files.clone(),
+        config.tracked_file_enabled_map(),
+        config.max_line_len,
+    )?;
     let rules = LineRules::new(&config.blacklist_regex, &config.whitelist_regex)?;
     let mut state = TuiState::new(&config);
     state.set_available_sources(watcher.active_sources());
@@ -900,6 +904,7 @@ mod tests {
         AppConfig {
             poll_interval_ms: 1000,
             tracked_files: vec![PathBuf::from("/tmp/a.log"), PathBuf::from("/tmp/b.log")],
+            tracked_file_enabled: Default::default(),
             max_buffer_lines: 100,
             max_line_len: 256,
             show_timestamps: true,

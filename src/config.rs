@@ -2,6 +2,7 @@ use crate::cli::CliArgs;
 use anyhow::{Context, Result, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -93,6 +94,8 @@ impl GuiTheme {
 pub struct AppConfig {
     pub poll_interval_ms: u64,
     pub tracked_files: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub tracked_file_enabled: BTreeMap<String, bool>,
     pub max_buffer_lines: usize,
     pub max_line_len: usize,
     pub show_timestamps: bool,
@@ -110,6 +113,7 @@ impl Default for AppConfig {
         Self {
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             tracked_files: Vec::new(),
+            tracked_file_enabled: BTreeMap::new(),
             max_buffer_lines: DEFAULT_MAX_BUFFER_LINES,
             max_line_len: DEFAULT_MAX_LINE_LEN,
             show_timestamps: true,
@@ -206,7 +210,29 @@ impl AppConfig {
         for path in &self.tracked_files {
             let _ = writeln!(summary, "    - {}", path.display());
         }
+        if !self.tracked_file_enabled.is_empty() {
+            let _ = writeln!(
+                summary,
+                "  tracked_file_enabled ({}):",
+                self.tracked_file_enabled.len()
+            );
+            for (path, enabled) in &self.tracked_file_enabled {
+                let _ = writeln!(summary, "    - {} => {}", path, enabled);
+            }
+        }
         summary
+    }
+
+    pub fn tracked_file_enabled_map(&self) -> HashMap<PathBuf, bool> {
+        self.tracked_file_enabled
+            .iter()
+            .map(|(path, enabled)| (PathBuf::from(path), *enabled))
+            .collect()
+    }
+
+    pub fn set_tracked_file_enabled(&mut self, path: &Path, enabled: bool) {
+        self.tracked_file_enabled
+            .insert(path.display().to_string(), enabled);
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -267,6 +293,7 @@ fn validate_allowing_empty_tracked_files(config: &AppConfig) -> Result<()> {
 struct FileConfig {
     poll_interval_ms: Option<u64>,
     tracked_files: Option<Vec<PathBuf>>,
+    tracked_file_enabled: Option<BTreeMap<String, bool>>,
     max_buffer_lines: Option<usize>,
     max_line_len: Option<usize>,
     show_timestamps: Option<bool>,
@@ -355,6 +382,9 @@ fn merge_config(file_cfg: Option<FileConfig>, cli: &CliArgs) -> Result<AppConfig
         if let Some(v) = file_cfg.tracked_files {
             config.tracked_files = v;
         }
+        if let Some(v) = file_cfg.tracked_file_enabled {
+            config.tracked_file_enabled = v;
+        }
     }
 
     if let Some(v) = cli.poll_ms {
@@ -417,6 +447,7 @@ case_insensitive_text_filter = false
 blacklist_regex = ["DEBUG.*"]
 whitelist_regex = ["DEBUG.*critical"]
 tracked_files = ["./a.log", "./b.log"]
+tracked_file_enabled = { "./a.log" = true, "./b.log" = false }
 "#,
         );
         let cli = CliArgs {
@@ -449,6 +480,10 @@ tracked_files = ["./a.log", "./b.log"]
         assert_eq!(config.blacklist_regex, vec!["DEBUG.*".to_string()]);
         assert_eq!(config.whitelist_regex, vec!["DEBUG.*critical".to_string()]);
         assert_eq!(config.tracked_files.len(), 2);
+        assert_eq!(
+            config.tracked_file_enabled.get("./b.log").copied(),
+            Some(false)
+        );
     }
 
     #[test]

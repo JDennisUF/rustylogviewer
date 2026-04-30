@@ -17,6 +17,22 @@ const TODAY_FORMAT_NAMES: &[&str] = &[
     "yy-mm-dd",
     "yy_mm_dd",
 ];
+const DATE_PLACEHOLDERS: &[&str] = &[
+    "{today}",
+    "{yyyymmdd}",
+    "{yyyy-mm-dd}",
+    "{yyyy_mm_dd}",
+    "{yymmdd}",
+    "{yy-mm-dd}",
+    "{yy_mm_dd}",
+    "{mmdd}",
+    "{mm-dd}",
+    "{mm_dd}",
+    "{yyyy}",
+    "{yy}",
+    "{mm}",
+    "{dd}",
+];
 const MAX_WILDCARD_MATCHES: usize = 200;
 
 #[derive(Debug, Clone)]
@@ -26,25 +42,69 @@ pub struct LogEvent {
     pub line: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedResolvedFileDescriptor {
+    pub path: PathBuf,
+    pub source_label: String,
+    pub enabled: bool,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedPathDescriptor {
+    pub raw_path: PathBuf,
+    pub is_dynamic: bool,
+    pub resolved_files: Vec<TrackedResolvedFileDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodayPatternSuggestion {
+    pub original_path: PathBuf,
+    pub pattern_path: PathBuf,
+}
+
 #[derive(Debug, Clone)]
 pub struct PollingWatcher {
     tracked_files: Vec<TrackedPathState>,
     max_line_len: usize,
+    file_enabled: HashMap<PathBuf, bool>,
     unreadable_files: HashMap<PathBuf, String>,
     status_messages: Vec<String>,
 }
 
 impl PollingWatcher {
     pub fn new(paths: Vec<PathBuf>, max_line_len: usize) -> Result<Self> {
+        Self::with_file_enabled(paths, HashMap::new(), max_line_len)
+    }
+
+    pub fn with_file_enabled(
+        paths: Vec<PathBuf>,
+        file_enabled: HashMap<PathBuf, bool>,
+        max_line_len: usize,
+    ) -> Result<Self> {
         let mut tracked_files = Vec::with_capacity(paths.len());
         for path in paths {
             tracked_files.push(TrackedPathState::new(path)?);
         }
+        let mut unreadable_files = HashMap::new();
+        let mut status_messages = Vec::new();
+        let today = current_local_date();
+        for state in &mut tracked_files {
+            state.sync_active_files(
+                today,
+                &file_enabled,
+                &mut unreadable_files,
+                &mut status_messages,
+            )?;
+            state.last_resolution_warnings.clear();
+        }
+        status_messages.clear();
         Ok(Self {
             tracked_files,
             max_line_len,
-            unreadable_files: HashMap::new(),
-            status_messages: Vec::new(),
+            file_enabled,
+            unreadable_files,
+            status_messages,
         })
     }
 
@@ -52,10 +112,12 @@ impl PollingWatcher {
         self.status_messages.clear();
         let mut out = Vec::new();
         let today = current_local_date();
+        let file_enabled = &self.file_enabled;
         for state in &mut self.tracked_files {
             state.poll(
                 today,
                 self.max_line_len,
+                file_enabled,
                 &mut out,
                 &mut self.unreadable_files,
                 &mut self.status_messages,
@@ -100,6 +162,28 @@ impl PollingWatcher {
         paths
     }
 
+    pub fn set_file_enabled(&mut self, path: &Path, enabled: bool) -> Result<()> {
+        self.file_enabled.insert(path.to_path_buf(), enabled);
+        let today = current_local_date();
+        let file_enabled = &self.file_enabled;
+        for state in &mut self.tracked_files {
+            state.sync_active_files(
+                today,
+                file_enabled,
+                &mut self.unreadable_files,
+                &mut self.status_messages,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn tracked_path_descriptors(&self) -> Vec<TrackedPathDescriptor> {
+        self.tracked_files
+            .iter()
+            .map(|state| state.descriptor(&self.file_enabled))
+            .collect()
+    }
+
     pub fn add_file(&mut self, path: PathBuf) -> Result<bool> {
         if self
             .tracked_files
@@ -111,6 +195,24 @@ impl PollingWatcher {
         self.tracked_files.push(TrackedPathState::new(path)?);
         Ok(true)
     }
+}
+
+pub fn describe_tracked_paths(
+    raw_paths: &[PathBuf],
+    file_enabled: &HashMap<PathBuf, bool>,
+) -> Result<Vec<TrackedPathDescriptor>> {
+    raw_paths
+        .iter()
+        .cloned()
+        .map(|raw_path| {
+            let state = TrackedPathState::new(raw_path)?;
+            Ok(state.descriptor(file_enabled))
+        })
+        .collect()
+}
+
+pub fn suggest_today_pattern(path: &Path) -> Option<TodayPatternSuggestion> {
+    suggest_today_pattern_for_date(path)
 }
 
 #[derive(Debug, Clone)]
@@ -143,11 +245,12 @@ impl TrackedPathState {
         &mut self,
         today: Date,
         max_line_len: usize,
+        file_enabled: &HashMap<PathBuf, bool>,
         out: &mut Vec<LogEvent>,
         unreadable_files: &mut HashMap<PathBuf, String>,
         status_messages: &mut Vec<String>,
     ) -> Result<()> {
-        self.sync_active_files(today, unreadable_files, status_messages)?;
+        self.sync_active_files(today, file_enabled, unreadable_files, status_messages)?;
 
         for state in &mut self.active_files {
             match state.poll(max_line_len, out) {
@@ -177,6 +280,7 @@ impl TrackedPathState {
     fn sync_active_files(
         &mut self,
         today: Date,
+        file_enabled: &HashMap<PathBuf, bool>,
         unreadable_files: &mut HashMap<PathBuf, String>,
         status_messages: &mut Vec<String>,
     ) -> Result<()> {
@@ -193,12 +297,33 @@ impl TrackedPathState {
 
         let mut existing_files = std::mem::take(&mut self.active_files);
         let mut synced_files = Vec::with_capacity(resolved_paths.len());
+        let keep_rollover_files = self.resolver.is_date_sensitive();
 
         for path in resolved_paths {
+            if !is_file_enabled(file_enabled, &path) {
+                unreadable_files.remove(&path);
+                if let Some(existing_idx) =
+                    existing_files.iter().position(|state| state.path == path)
+                {
+                    existing_files.remove(existing_idx);
+                }
+                continue;
+            }
             if let Some(existing_idx) = existing_files.iter().position(|state| state.path == path) {
                 synced_files.push(existing_files.remove(existing_idx));
             } else {
                 synced_files.push(TrackedFileState::new(path)?);
+            }
+        }
+
+        for state in existing_files {
+            if keep_rollover_files
+                && is_file_enabled(file_enabled, &state.path)
+                && should_keep_rollover_file(&state.path)
+            {
+                synced_files.push(state);
+            } else {
+                unreadable_files.remove(&state.path);
             }
         }
 
@@ -214,6 +339,37 @@ impl TrackedPathState {
             }
         }
         self.last_resolution_warnings = current_warnings;
+    }
+
+    fn descriptor(&self, file_enabled: &HashMap<PathBuf, bool>) -> TrackedPathDescriptor {
+        let today = current_local_date();
+        let mut resolved_paths = self.resolver.resolve_paths_for_date(today).paths;
+        for active in &self.active_files {
+            if !resolved_paths.iter().any(|path| path == &active.path) {
+                resolved_paths.push(active.path.clone());
+            }
+        }
+        resolved_paths.sort();
+        resolved_paths.dedup();
+
+        let resolved_files = resolved_paths
+            .into_iter()
+            .map(|path| TrackedResolvedFileDescriptor {
+                source_label: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string()),
+                enabled: is_file_enabled(file_enabled, &path),
+                active: self.active_files.iter().any(|state| state.path == path),
+                path,
+            })
+            .collect();
+
+        TrackedPathDescriptor {
+            raw_path: self.raw_path.clone(),
+            is_dynamic: self.resolver.is_dynamic(),
+            resolved_files,
+        }
     }
 }
 
@@ -257,6 +413,16 @@ impl PathResolver {
             paths: resolved,
             warnings,
         }
+    }
+
+    fn is_date_sensitive(&self) -> bool {
+        DATE_PLACEHOLDERS
+            .iter()
+            .any(|placeholder| self.raw.contains(placeholder))
+    }
+
+    fn is_dynamic(&self) -> bool {
+        self.is_date_sensitive() || contains_wildcards(&self.raw)
     }
 }
 
@@ -344,6 +510,18 @@ fn expand_wildcard_pattern(raw: &str, warnings: &mut Vec<String>) -> Vec<PathBuf
     }
 
     matched
+}
+
+fn should_keep_rollover_file(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
+}
+
+fn is_file_enabled(file_enabled: &HashMap<PathBuf, bool>, path: &Path) -> bool {
+    file_enabled.get(path).copied().unwrap_or(true)
 }
 
 fn contains_wildcards(raw: &str) -> bool {
@@ -481,6 +659,155 @@ fn current_local_date() -> Date {
 
 fn month_number(month: Month) -> u8 {
     month as u8
+}
+
+fn suggest_today_pattern_for_date(path: &Path) -> Option<TodayPatternSuggestion> {
+    let file_name = path.file_name()?.to_str()?;
+    let stem = path.file_stem()?.to_str()?;
+    let extension = path.extension().and_then(|ext| ext.to_str());
+    if file_name.contains("{today}")
+        || DATE_PLACEHOLDERS
+            .iter()
+            .any(|token| file_name.contains(token))
+    {
+        return None;
+    }
+
+    let suffix_len = recognized_date_suffix_len(stem)?;
+    let prefix = stem.get(..stem.len().checked_sub(suffix_len)?)?;
+    if prefix.is_empty() && extension.is_none() {
+        return None;
+    }
+
+    let mut suggested_name = format!("{prefix}{{today}}");
+    if let Some(extension) = extension {
+        suggested_name.push('.');
+        suggested_name.push_str(extension);
+    }
+    let pattern_path = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(
+            || PathBuf::from(&suggested_name),
+            |parent| parent.join(&suggested_name),
+        );
+    if pattern_path != path {
+        return Some(TodayPatternSuggestion {
+            original_path: path.to_path_buf(),
+            pattern_path,
+        });
+    }
+
+    None
+}
+
+fn recognized_date_suffix_len(stem: &str) -> Option<usize> {
+    [
+        (10usize, DateSuffixFormat::YearMonthDay('-')),
+        (10, DateSuffixFormat::YearMonthDay('_')),
+        (8, DateSuffixFormat::YearMonthDayCompact),
+        (8, DateSuffixFormat::ShortYearMonthDay('-')),
+        (8, DateSuffixFormat::ShortYearMonthDay('_')),
+        (6, DateSuffixFormat::ShortYearMonthDayCompact),
+        (5, DateSuffixFormat::MonthDay('-')),
+        (5, DateSuffixFormat::MonthDay('_')),
+        (4, DateSuffixFormat::MonthDayCompact),
+    ]
+    .into_iter()
+    .find_map(|(len, format)| {
+        stem.get(stem.len().checked_sub(len)?..)
+            .filter(|suffix| format.is_valid(suffix))
+            .map(|_| len)
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DateSuffixFormat {
+    YearMonthDay(char),
+    YearMonthDayCompact,
+    ShortYearMonthDay(char),
+    ShortYearMonthDayCompact,
+    MonthDay(char),
+    MonthDayCompact,
+}
+
+impl DateSuffixFormat {
+    fn is_valid(self, value: &str) -> bool {
+        match self {
+            Self::YearMonthDay(separator) => parse_ymd(value, separator)
+                .is_some_and(|(year, month, day)| is_valid_year_month_day(year, month, day)),
+            Self::YearMonthDayCompact => parse_digits(value, &[4, 2, 2]).is_some_and(|parts| {
+                is_valid_year_month_day(parts[0], parts[1] as u8, parts[2] as u8)
+            }),
+            Self::ShortYearMonthDay(separator) => {
+                parse_ymd(value, separator).is_some_and(|(year, month, day)| {
+                    is_valid_year_month_day(2000 + year.rem_euclid(100), month, day)
+                })
+            }
+            Self::ShortYearMonthDayCompact => {
+                parse_digits(value, &[2, 2, 2]).is_some_and(|parts| {
+                    is_valid_year_month_day(2000 + parts[0], parts[1] as u8, parts[2] as u8)
+                })
+            }
+            Self::MonthDay(separator) => parse_md(value, separator)
+                .is_some_and(|(month, day)| is_valid_month_day(month, day)),
+            Self::MonthDayCompact => parse_digits(value, &[2, 2])
+                .is_some_and(|parts| is_valid_month_day(parts[0] as u8, parts[1] as u8)),
+        }
+    }
+}
+
+fn parse_ymd(value: &str, separator: char) -> Option<(i32, u8, u8)> {
+    let mut parts = value.split(separator);
+    let year = parts.next()?.parse().ok()?;
+    let month = parts.next()?.parse().ok()?;
+    let day = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn parse_md(value: &str, separator: char) -> Option<(u8, u8)> {
+    let mut parts = value.split(separator);
+    let month = parts.next()?.parse().ok()?;
+    let day = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((month, day))
+}
+
+fn parse_digits(value: &str, widths: &[usize]) -> Option<Vec<i32>> {
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let expected_len = widths.iter().sum::<usize>();
+    if value.len() != expected_len {
+        return None;
+    }
+    let mut start = 0;
+    let mut parts = Vec::with_capacity(widths.len());
+    for width in widths {
+        let end = start + width;
+        parts.push(value.get(start..end)?.parse().ok()?);
+        start = end;
+    }
+    Some(parts)
+}
+
+fn is_valid_year_month_day(year: i32, month: u8, day: u8) -> bool {
+    let Ok(month) = Month::try_from(month) else {
+        return false;
+    };
+    Date::from_calendar_date(year, month, day).is_ok()
+}
+
+fn is_valid_month_day(month: u8, day: u8) -> bool {
+    matches!(
+        (month, day),
+        (1 | 3 | 5 | 7 | 8 | 10 | 12, 1..=31) | (4 | 6 | 9 | 11, 1..=30) | (2, 1..=29)
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -646,6 +973,10 @@ mod tests {
         Date::from_calendar_date(2026, Month::April, 24).expect("valid date")
     }
 
+    fn next_sample_date() -> Date {
+        Date::from_calendar_date(2026, Month::April, 25).expect("valid date")
+    }
+
     #[test]
     fn explicit_date_tokens_render_to_todays_filename() {
         let resolver = PathResolver::new(Path::new("/tmp/app_{yyyy}{mm}{dd}.log"));
@@ -677,6 +1008,50 @@ mod tests {
                 PathBuf::from("/tmp/app_26_04_24.log"),
             ]
         );
+    }
+
+    #[test]
+    fn suggest_today_pattern_replaces_recognized_date_suffix() {
+        let path = PathBuf::from("/tmp/app_20260424.log");
+
+        let suggestion = suggest_today_pattern_for_date(&path).expect("today suggestion");
+
+        assert_eq!(suggestion.original_path, path);
+        assert_eq!(
+            suggestion.pattern_path,
+            PathBuf::from("/tmp/app_{today}.log")
+        );
+    }
+
+    #[test]
+    fn suggest_today_pattern_supports_short_date_suffixes() {
+        let path = PathBuf::from("/tmp/app-0424.log");
+
+        let suggestion = suggest_today_pattern_for_date(&path).expect("today suggestion");
+
+        assert_eq!(
+            suggestion.pattern_path,
+            PathBuf::from("/tmp/app-{today}.log")
+        );
+    }
+
+    #[test]
+    fn suggest_today_pattern_supports_valid_non_today_suffixes() {
+        let path = PathBuf::from("/tmp/app_04_26.log");
+
+        let suggestion = suggest_today_pattern_for_date(&path).expect("today suggestion");
+
+        assert_eq!(
+            suggestion.pattern_path,
+            PathBuf::from("/tmp/app_{today}.log")
+        );
+    }
+
+    #[test]
+    fn suggest_today_pattern_ignores_invalid_date_suffix() {
+        let path = PathBuf::from("/tmp/app_20261340.log");
+
+        assert_eq!(suggest_today_pattern_for_date(&path), None);
     }
 
     #[test]
@@ -823,14 +1198,17 @@ mod tests {
         let mut watcher = PollingWatcher {
             tracked_files: vec![TrackedPathState::new(pattern_path).expect("pattern state")],
             max_line_len: 512,
+            file_enabled: HashMap::new(),
             unreadable_files: HashMap::new(),
             status_messages: Vec::new(),
         };
+        let file_enabled = HashMap::new();
 
         let events = watcher.tracked_files[0]
             .poll(
                 sample_date(),
                 512,
+                &file_enabled,
                 &mut Vec::new(),
                 &mut watcher.unreadable_files,
                 &mut watcher.status_messages,
@@ -851,6 +1229,7 @@ mod tests {
             .poll(
                 sample_date(),
                 512,
+                &file_enabled,
                 &mut out,
                 &mut watcher.unreadable_files,
                 &mut watcher.status_messages,
@@ -859,6 +1238,82 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].line, "new-line");
         assert_eq!(out[0].source, "app_0424.log");
+    }
+
+    #[test]
+    fn dated_rollover_keeps_previous_file_until_it_disappears() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let previous_path = dir.path().join("app_0424.log");
+        let next_path = dir.path().join("app_0425.log");
+        let pattern_path = dir.path().join("app_{mmdd}.log");
+
+        let mut previous_file = File::create(&previous_path).expect("create previous log");
+        writeln!(previous_file, "old-line").expect("write old line");
+        previous_file.flush().expect("flush previous");
+
+        let mut tracked = TrackedPathState {
+            raw_path: pattern_path.clone(),
+            resolver: PathResolver::new(&pattern_path),
+            active_files: vec![
+                TrackedFileState::new(previous_path.clone()).expect("previous state"),
+            ],
+            last_resolution_warnings: HashSet::new(),
+        };
+        let mut unreadable = HashMap::new();
+        let mut status_messages = Vec::new();
+        let file_enabled = HashMap::new();
+
+        tracked
+            .sync_active_files(
+                next_sample_date(),
+                &file_enabled,
+                &mut unreadable,
+                &mut status_messages,
+            )
+            .expect("rollover sync");
+
+        let active_paths = tracked
+            .active_files
+            .iter()
+            .map(|state| state.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(active_paths, vec![next_path.clone(), previous_path.clone()]);
+
+        let mut next_file = File::create(&next_path).expect("create next log");
+        writeln!(next_file, "new-day-line").expect("write new-day line");
+        next_file.flush().expect("flush next");
+
+        let mut out = Vec::new();
+        tracked
+            .poll(
+                next_sample_date(),
+                512,
+                &file_enabled,
+                &mut out,
+                &mut unreadable,
+                &mut status_messages,
+            )
+            .expect("poll after next-day file creation");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source, "app_0425.log");
+        assert_eq!(out[0].line, "new-day-line");
+
+        std::fs::remove_file(&previous_path).expect("remove previous log");
+        tracked
+            .sync_active_files(
+                next_sample_date(),
+                &file_enabled,
+                &mut unreadable,
+                &mut status_messages,
+            )
+            .expect("sync after previous removal");
+
+        let active_paths = tracked
+            .active_files
+            .iter()
+            .map(|state| state.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(active_paths, vec![next_path]);
     }
 
     #[test]
@@ -910,6 +1365,27 @@ mod tests {
         assert_eq!(
             watcher.active_file_paths(),
             vec![app_a.display().to_string(), app_b.display().to_string()]
+        );
+    }
+
+    #[test]
+    fn disabled_file_is_removed_from_active_sources() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app_a = dir.path().join("app-a.log");
+        let app_b = dir.path().join("app-b.log");
+        std::fs::write(&app_a, "a\n").expect("write app-a");
+        std::fs::write(&app_b, "b\n").expect("write app-b");
+
+        let mut enabled = HashMap::new();
+        enabled.insert(app_b.clone(), false);
+        let watcher =
+            PollingWatcher::with_file_enabled(vec![dir.path().join("app-*.log")], enabled, 512)
+                .expect("watcher");
+
+        assert_eq!(watcher.active_sources(), vec!["app-a.log".to_string()]);
+        assert_eq!(
+            watcher.active_file_paths(),
+            vec![app_a.display().to_string()]
         );
     }
 }

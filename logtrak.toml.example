@@ -26,3 +26,7 @@ tracked_files = [
   # yyyymmdd, yyyy-mm-dd, yyyy_mm_dd, mmdd, mm-dd, mm_dd, yymmdd, yy-mm-dd, yy_mm_dd
   "/tmp/daily_{today}.log",
 ]
+
+# Optional per-resolved-file enable state persisted by the GUI.
+# These keys refer to concrete file paths, not the raw tracked_files patterns.
+tracked_file_enabled = { "/tmp/app-20260426.log" = true, "/tmp/app-0426.log" = false }

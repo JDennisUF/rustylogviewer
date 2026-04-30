@@ -36,7 +36,11 @@ fn run_headless(config: AppConfig) -> Result<()> {
     println!("{}", config.summary_string());
     println!("Starting headless watcher. Press Ctrl-C to exit.");
 
-    let mut watcher = PollingWatcher::new(config.tracked_files.clone(), config.max_line_len)?;
+    let mut watcher = PollingWatcher::with_file_enabled(
+        config.tracked_files.clone(),
+        config.tracked_file_enabled_map(),
+        config.max_line_len,
+    )?;
     let rules = LineRules::new(&config.blacklist_regex, &config.whitelist_regex)?;
     loop {
         let events = watcher.poll()?;

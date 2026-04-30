@@ -1,7 +1,10 @@
 use crate::config::{AppConfig, GuiTheme};
 use crate::formatting::format_event_line;
 use crate::line_rules::LineRules;
-use crate::watcher::{LogEvent, PollingWatcher};
+use crate::watcher::{
+    LogEvent, PollingWatcher, TodayPatternSuggestion, TrackedPathDescriptor,
+    describe_tracked_paths, suggest_today_pattern,
+};
 use anyhow::{Result, anyhow};
 use eframe::egui::{self, Color32, FontId, RichText, TextEdit, TextStyle};
 use serde::{Deserialize, Serialize};
@@ -86,6 +89,7 @@ struct GuiApp {
     source_filter: Option<String>,
     tracked_files_window_open: bool,
     pending_dropped_config_path: Option<PathBuf>,
+    pending_today_pattern_suggestion: Option<TodayPatternSuggestion>,
     config_panel_visible: bool,
     last_applied_theme: Option<GuiTheme>,
     last_applied_font_size: Option<f32>,
@@ -146,6 +150,7 @@ impl GuiApp {
             source_filter: None,
             tracked_files_window_open: false,
             pending_dropped_config_path: None,
+            pending_today_pattern_suggestion: None,
             config_panel_visible: true,
             last_applied_theme: None,
             last_applied_font_size: None,
@@ -188,19 +193,20 @@ impl GuiApp {
             return;
         }
 
-        let Some(path) = first_dropped_toml_path(&dropped_files) else {
-            self.status_message = "Dropped file is not a .toml config".to_string();
-            return;
-        };
-
-        if self.running {
-            self.pending_dropped_config_path = Some(path.clone());
-            self.status_message = format!(
-                "Dropped {}. Confirm stopping active logs before loading.",
-                path.display()
-            );
+        if let Some(path) = first_dropped_toml_path(&dropped_files) {
+            if self.running {
+                self.pending_dropped_config_path = Some(path.clone());
+                self.status_message = format!(
+                    "Dropped {}. Confirm stopping active logs before loading.",
+                    path.display()
+                );
+            } else {
+                self.open_config(path);
+            }
+        } else if let Some(path) = first_dropped_log_path(&dropped_files) {
+            self.add_tracked_file_from_picker(path);
         } else {
-            self.open_config(path);
+            self.status_message = "Dropped item has no usable file path".to_string();
         }
     }
 
@@ -292,8 +298,9 @@ impl GuiApp {
             self.status_message = format!("Invalid config: {}", err);
             return;
         }
-        let watcher = match PollingWatcher::new(
+        let watcher = match PollingWatcher::with_file_enabled(
             self.config.tracked_files.clone(),
+            self.config.tracked_file_enabled_map(),
             self.config.max_line_len,
         ) {
             Ok(w) => w,
@@ -399,19 +406,115 @@ impl GuiApp {
         names.into_iter().collect()
     }
 
-    fn tracked_file_list(&self) -> Vec<String> {
+    fn tracked_path_descriptors(&self) -> Vec<TrackedPathDescriptor> {
         if let Some(watcher) = self.watcher.as_ref() {
-            let active = watcher.active_file_paths();
-            if !active.is_empty() {
-                return active;
+            return watcher.tracked_path_descriptors();
+        }
+
+        describe_tracked_paths(
+            &self.config.tracked_files,
+            &self.config.tracked_file_enabled_map(),
+        )
+        .unwrap_or_default()
+    }
+
+    fn set_tracked_file_enabled(&mut self, path: &Path, enabled: bool) {
+        self.config.set_tracked_file_enabled(path, enabled);
+        if let Some(watcher) = self.watcher.as_mut() {
+            if let Err(err) = watcher.set_file_enabled(path, enabled) {
+                self.status_message =
+                    format!("Failed to update tracking for {}: {}", path.display(), err);
+                return;
+            }
+        }
+        self.status_message = format!(
+            "{} {}",
+            if enabled {
+                "Tracking enabled for"
+            } else {
+                "Tracking disabled for"
+            },
+            path.display()
+        );
+    }
+
+    fn add_tracked_file_from_picker(&mut self, path: PathBuf) {
+        if let Some(suggestion) = suggest_today_pattern(&path) {
+            self.pending_today_pattern_suggestion = Some(suggestion);
+            return;
+        }
+        self.add_tracked_path(path);
+    }
+
+    fn add_tracked_path(&mut self, path: PathBuf) {
+        if path.as_os_str().is_empty() {
+            return;
+        }
+        if self
+            .config
+            .tracked_files
+            .iter()
+            .any(|existing| existing == &path)
+        {
+            self.status_message = format!("Already tracking {}", path.display());
+            return;
+        }
+
+        if let Some(watcher) = self.watcher.as_mut() {
+            match watcher.add_file(path.clone()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.status_message = format!("Already tracking {}", path.display());
+                    return;
+                }
+                Err(err) => {
+                    self.status_message =
+                        format!("Failed to add tracked file {}: {}", path.display(), err);
+                    return;
+                }
             }
         }
 
-        self.config
-            .tracked_files
+        self.config.tracked_files.push(path.clone());
+        self.status_message = format!("Added tracked file {}", path.display());
+    }
+
+    fn tracked_path_indicator(
+        raw_path: &Path,
+        descriptors: &[TrackedPathDescriptor],
+    ) -> (Color32, &'static str) {
+        let Some(descriptor) = descriptors.iter().find(|desc| desc.raw_path == raw_path) else {
+            return (Color32::from_rgb(180, 40, 40), "Not tracked");
+        };
+
+        if !descriptor.is_dynamic {
+            let enabled = descriptor
+                .resolved_files
+                .first()
+                .is_none_or(|resolved| resolved.enabled);
+            return if enabled {
+                (Color32::from_rgb(48, 176, 86), "Tracked")
+            } else {
+                (Color32::from_rgb(180, 40, 40), "Not tracked")
+            };
+        }
+
+        let total = descriptor.resolved_files.len();
+        let enabled = descriptor
+            .resolved_files
             .iter()
-            .map(|path| path.display().to_string())
-            .collect()
+            .filter(|resolved| resolved.enabled)
+            .count();
+        if enabled == 0 {
+            (Color32::from_rgb(180, 40, 40), "No matching files tracked")
+        } else if enabled == total {
+            (Color32::from_rgb(48, 176, 86), "All matching files tracked")
+        } else {
+            (
+                Color32::from_rgb(212, 170, 52),
+                "Some matching files tracked",
+            )
+        }
     }
 
     fn display_matches_filters(
@@ -631,6 +734,13 @@ fn first_dropped_toml_path(dropped_files: &[egui::DroppedFile]) -> Option<PathBu
         .iter()
         .filter_map(|file| file.path.clone())
         .find(|path| is_toml_file_path(path))
+}
+
+fn first_dropped_log_path(dropped_files: &[egui::DroppedFile]) -> Option<PathBuf> {
+    dropped_files
+        .iter()
+        .filter_map(|file| file.path.clone())
+        .find(|path| !is_toml_file_path(path) && path.is_file())
 }
 
 fn select_startup_config(initial: Option<PathBuf>, recent: &[PathBuf]) -> Option<PathBuf> {
@@ -890,6 +1000,7 @@ mod tests {
             config: AppConfig {
                 poll_interval_ms: 1000,
                 tracked_files: vec![PathBuf::from("/tmp/app_{today}.log")],
+                tracked_file_enabled: Default::default(),
                 max_buffer_lines: 100,
                 max_line_len: 256,
                 show_timestamps: true,
@@ -919,6 +1030,7 @@ mod tests {
             source_filter: None,
             tracked_files_window_open: false,
             pending_dropped_config_path: None,
+            pending_today_pattern_suggestion: None,
             config_panel_visible: true,
             last_applied_theme: None,
             last_applied_font_size: None,
@@ -1074,6 +1186,60 @@ tracked_files = ["/tmp/one.log"]
     }
 
     #[test]
+    fn first_dropped_log_path_ignores_toml_and_requires_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir.path().join("team.toml");
+        let log = dir.path().join("app.log");
+        let missing = dir.path().join("missing.log");
+        std::fs::write(&config, "tracked_files = []").expect("write config");
+        std::fs::write(&log, "line\n").expect("write log");
+
+        let dropped_files = vec![
+            egui::DroppedFile {
+                path: Some(config),
+                ..Default::default()
+            },
+            egui::DroppedFile {
+                path: Some(missing),
+                ..Default::default()
+            },
+            egui::DroppedFile {
+                path: Some(log.clone()),
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(first_dropped_log_path(&dropped_files), Some(log));
+    }
+
+    #[test]
+    fn dropped_dated_log_queues_today_pattern_suggestion() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let today = time::OffsetDateTime::now_local()
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            .date();
+        let log = dir.path().join(format!(
+            "app_{:04}{:02}{:02}.log",
+            today.year(),
+            today.month() as u8,
+            today.day()
+        ));
+        std::fs::write(&log, "line\n").expect("write log");
+
+        let mut app = test_gui_app();
+        app.config.tracked_files.clear();
+
+        app.add_tracked_file_from_picker(log.clone());
+
+        let suggestion = app
+            .pending_today_pattern_suggestion
+            .expect("today pattern suggestion");
+        assert_eq!(suggestion.original_path, log);
+        assert_eq!(suggestion.pattern_path, dir.path().join("app_{today}.log"));
+        assert!(app.config.tracked_files.is_empty());
+    }
+
+    #[test]
     fn available_sources_prefer_resolved_watcher_sources() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("app_20260425.log"), "a\n").expect("write app a");
@@ -1089,7 +1255,7 @@ tracked_files = ["/tmp/one.log"]
     }
 
     #[test]
-    fn tracked_file_list_returns_resolved_active_files_when_running() {
+    fn tracked_path_descriptors_return_resolved_files_when_running() {
         let dir = tempfile::tempdir().expect("tempdir");
         let app_a = dir.path().join("app_20260425.log");
         let app_b = dir.path().join("app_0425.log");
@@ -1100,10 +1266,37 @@ tracked_files = ["/tmp/one.log"]
         app.running = true;
         let watcher =
             PollingWatcher::new(vec![dir.path().join("app_{today}.log")], 256).expect("watcher");
-        let expected = watcher.active_file_paths();
+        let expected = watcher.tracked_path_descriptors();
         app.watcher = Some(watcher);
 
-        assert_eq!(app.tracked_file_list(), expected);
+        assert_eq!(app.tracked_path_descriptors(), expected);
+    }
+
+    #[test]
+    fn tracked_path_indicator_is_yellow_for_partial_dynamic_tracking() {
+        let raw_path = PathBuf::from("/tmp/app_{today}.log");
+        let descriptors = vec![TrackedPathDescriptor {
+            raw_path: raw_path.clone(),
+            is_dynamic: true,
+            resolved_files: vec![
+                crate::watcher::TrackedResolvedFileDescriptor {
+                    path: PathBuf::from("/tmp/app_20260426.log"),
+                    source_label: "app_20260426.log".to_string(),
+                    enabled: true,
+                    active: true,
+                },
+                crate::watcher::TrackedResolvedFileDescriptor {
+                    path: PathBuf::from("/tmp/app_0426.log"),
+                    source_label: "app_0426.log".to_string(),
+                    enabled: false,
+                    active: false,
+                },
+            ],
+        }];
+
+        let (color, label) = GuiApp::tracked_path_indicator(&raw_path, &descriptors);
+        assert_eq!(color, Color32::from_rgb(212, 170, 52));
+        assert_eq!(label, "Some matching files tracked");
     }
 }
 
@@ -1126,6 +1319,9 @@ impl eframe::App for GuiApp {
         let recent_snapshot = self.recent_configs.clone();
         let mut confirm_load_dropped_config = false;
         let mut cancel_load_dropped_config = false;
+        let mut accept_today_pattern = false;
+        let mut accept_original_file = false;
+        let mut cancel_today_pattern = false;
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -1226,9 +1422,63 @@ impl eframe::App for GuiApp {
             self.status_message = "Dropped config ignored; current tracking continues".to_string();
         }
 
+        if let Some(suggestion) = self.pending_today_pattern_suggestion.as_ref() {
+            egui::Window::new("Track Daily Log?")
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .collapsible(false)
+                .resizable(false)
+                .default_width(720.0)
+                .show(ctx, |ui| {
+                    ui.set_min_width(680.0);
+                    ui.label("This filename ends with today's date.");
+                    ui.separator();
+                    ui.label(RichText::new("Selected").strong());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(suggestion.original_path.display().to_string())
+                                .monospace(),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
+                    ui.label(RichText::new("Suggested Pattern").strong());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(suggestion.pattern_path.display().to_string())
+                                .monospace(),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
+                    ui.separator();
+                    ui.label("Track the daily pattern instead of only this file?");
+                    ui.horizontal(|ui| {
+                        if ui.button("Track Pattern").clicked() {
+                            accept_today_pattern = true;
+                        }
+                        if ui.button("Track This File").clicked() {
+                            accept_original_file = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_today_pattern = true;
+                        }
+                    });
+                });
+        }
+        if accept_today_pattern || accept_original_file || cancel_today_pattern {
+            if let Some(suggestion) = self.pending_today_pattern_suggestion.take() {
+                if accept_today_pattern {
+                    self.add_tracked_path(suggestion.pattern_path);
+                } else if accept_original_file {
+                    self.add_tracked_path(suggestion.original_path);
+                } else {
+                    self.status_message = "Add tracked file cancelled".to_string();
+                }
+            }
+        }
+
         if self.config_panel_visible {
             let mut open_recent_from_panel: Option<PathBuf> = None;
             let mut remove_recent_idx: Option<usize> = None;
+            let tracked_path_descriptors = self.tracked_path_descriptors();
             egui::SidePanel::left("config_sidebar")
                 .resizable(true)
                 .min_width(340.0)
@@ -1318,7 +1568,11 @@ impl eframe::App for GuiApp {
                     ui.label(RichText::new("Tracked Files").strong());
                     let mut remove_file_idx = None;
                     for (idx, path) in self.config.tracked_files.iter_mut().enumerate() {
+                        let (indicator_color, indicator_label) =
+                            GuiApp::tracked_path_indicator(path, &tracked_path_descriptors);
                         ui.horizontal(|ui| {
+                            ui.label(RichText::new("●").color(indicator_color))
+                                .on_hover_text(indicator_label);
                             let mut value = path.display().to_string();
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -1345,7 +1599,7 @@ impl eframe::App for GuiApp {
                     ui.horizontal(|ui| {
                         if ui.button("Add File").clicked() {
                             if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                self.config.tracked_files.push(path);
+                                self.add_tracked_file_from_picker(path);
                             }
                         }
                         if ui.button("Add Empty").clicked() {
@@ -1437,10 +1691,10 @@ impl eframe::App for GuiApp {
                 ui.label("Source");
                 egui::ComboBox::from_id_salt("source-filter")
                     .width(320.0)
+                    .height((self.config.gui_font_size + 10.0) * 20.0)
                     .selected_text(self.source_filter.as_deref().unwrap_or("All"))
                     .show_ui(ui, |ui| {
                         ui.set_min_width(320.0);
-                        ui.set_max_height(ui.text_style_height(&TextStyle::Body) * 12.0);
                         ui.selectable_value(&mut self.source_filter, None, "All");
                         for source in self.available_sources() {
                             ui.selectable_value(
@@ -1518,31 +1772,55 @@ impl eframe::App for GuiApp {
         });
 
         if self.tracked_files_window_open {
-            let tracked_files = self.tracked_file_list();
+            let tracked_path_descriptors = self.tracked_path_descriptors();
+            let mut tracked_files_window_open = self.tracked_files_window_open;
+            let mut pending_updates = Vec::new();
             egui::Window::new("Tracked Files")
-                .open(&mut self.tracked_files_window_open)
+                .open(&mut tracked_files_window_open)
                 .resizable(true)
                 .default_width(640.0)
                 .show(ctx, |ui| {
-                    if self.running {
-                        ui.label("Resolved active tracked files");
-                    } else {
-                        ui.label("Configured tracked files");
-                    }
-                    ui.label(format!("Count: {}", tracked_files.len()));
+                    ui.label("Toggle individual resolved files on or off.");
+                    let tracked_file_count = tracked_path_descriptors
+                        .iter()
+                        .map(|descriptor| descriptor.resolved_files.len())
+                        .sum::<usize>();
+                    ui.label(format!("Count: {}", tracked_file_count));
                     ui.separator();
-                    if tracked_files.is_empty() {
+                    if tracked_file_count == 0 {
                         ui.label("No tracked files configured.");
                     } else {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                for path in tracked_files {
-                                    ui.label(RichText::new(path).monospace());
+                                for descriptor in &tracked_path_descriptors {
+                                    ui.label(
+                                        RichText::new(descriptor.raw_path.display().to_string())
+                                            .strong()
+                                            .monospace(),
+                                    );
+                                    for resolved in &descriptor.resolved_files {
+                                        let mut enabled = resolved.enabled;
+                                        ui.horizontal(|ui| {
+                                            if ui.checkbox(&mut enabled, "").changed() {
+                                                pending_updates
+                                                    .push((resolved.path.clone(), enabled));
+                                            }
+                                            ui.label(
+                                                RichText::new(resolved.path.display().to_string())
+                                                    .monospace(),
+                                            );
+                                        });
+                                    }
+                                    ui.separator();
                                 }
                             });
                     }
                 });
+            self.tracked_files_window_open = tracked_files_window_open;
+            for (path, enabled) in pending_updates {
+                self.set_tracked_file_enabled(&path, enabled);
+            }
         }
     }
 }

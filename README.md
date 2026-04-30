@@ -87,6 +87,12 @@ Tracked-file wildcards:
 - matches are capped at `200` files per tracked pattern, with a warning if the cap is hit
 - wildcard patterns are resolved during polling, so newly created matching files can be picked up without restarting
 
+Tracked-file enable state:
+
+- the GUI `Tracked Files` window lets you enable or disable individual resolved files under a wildcard or date-based pattern
+- those per-file states are stored in the config as `tracked_file_enabled`, keyed by resolved file path
+- if you want the toggles to persist, save the config after editing them
+
 Regex rules:
 
 - `blacklist_regex`: hide matching lines.

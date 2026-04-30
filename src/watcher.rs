@@ -138,6 +138,7 @@ impl PollingWatcher {
                 state
                     .active_files
                     .iter()
+                    .filter(|file| file_is_present(&file.path))
                     .map(|file| file.source_label.clone())
             })
             .collect::<Vec<_>>();
@@ -154,6 +155,7 @@ impl PollingWatcher {
                 state
                     .active_files
                     .iter()
+                    .filter(|file| file_is_present(&file.path))
                     .map(|file| file.path.display().to_string())
             })
             .collect::<Vec<_>>();
@@ -343,9 +345,18 @@ impl TrackedPathState {
 
     fn descriptor(&self, file_enabled: &HashMap<PathBuf, bool>) -> TrackedPathDescriptor {
         let today = current_local_date();
-        let mut resolved_paths = self.resolver.resolve_paths_for_date(today).paths;
+        let is_dynamic = self.resolver.is_dynamic();
+        let mut resolved_paths = self
+            .resolver
+            .resolve_paths_for_date(today)
+            .paths
+            .into_iter()
+            .filter(|path| !is_dynamic || file_is_present(path))
+            .collect::<Vec<_>>();
         for active in &self.active_files {
-            if !resolved_paths.iter().any(|path| path == &active.path) {
+            if file_is_present(&active.path)
+                && !resolved_paths.iter().any(|path| path == &active.path)
+            {
                 resolved_paths.push(active.path.clone());
             }
         }
@@ -367,7 +378,7 @@ impl TrackedPathState {
 
         TrackedPathDescriptor {
             raw_path: self.raw_path.clone(),
-            is_dynamic: self.resolver.is_dynamic(),
+            is_dynamic,
             resolved_files,
         }
     }
@@ -515,6 +526,14 @@ fn expand_wildcard_pattern(raw: &str, warnings: &mut Vec<String>) -> Vec<PathBuf
 fn should_keep_rollover_file(path: &Path) -> bool {
     match std::fs::metadata(path) {
         Ok(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
+}
+
+fn file_is_present(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.is_file(),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
         Err(_) => true,
     }
@@ -1349,6 +1368,42 @@ mod tests {
             watcher.active_sources(),
             vec!["app-a.log".to_string(), "app-b.log".to_string()]
         );
+    }
+
+    #[test]
+    fn today_descriptors_only_show_existing_date_candidates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tokens = DateTokens::for_date(current_local_date());
+        let existing = dir
+            .path()
+            .join(format!("app_{}.log", tokens.value_for("mm_dd")));
+        std::fs::write(&existing, "a\n").expect("write existing today log");
+
+        let watcher =
+            PollingWatcher::new(vec![dir.path().join("app_{today}.log")], 512).expect("watcher");
+        let descriptors = watcher.tracked_path_descriptors();
+
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].resolved_files.len(), 1);
+        assert_eq!(descriptors[0].resolved_files[0].path, existing);
+        assert_eq!(
+            watcher.active_sources(),
+            vec![descriptors[0].resolved_files[0].source_label.clone()]
+        );
+    }
+
+    #[test]
+    fn literal_descriptor_still_shows_missing_configured_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.log");
+
+        let watcher = PollingWatcher::new(vec![missing.clone()], 512).expect("watcher");
+        let descriptors = watcher.tracked_path_descriptors();
+
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].resolved_files.len(), 1);
+        assert_eq!(descriptors[0].resolved_files[0].path, missing);
+        assert!(watcher.active_sources().is_empty());
     }
 
     #[test]
